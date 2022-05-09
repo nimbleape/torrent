@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/RoaringBitmap/roaring"
+	"github.com/ajwerner/btree"
 	"github.com/anacrolix/chansync"
 	"github.com/anacrolix/chansync/events"
 	"github.com/anacrolix/dht/v2"
@@ -149,7 +150,9 @@ type Torrent struct {
 
 	requestState []requestState
 	// Chunks we've written to since the corresponding piece was last checked.
-	dirtyChunks typedRoaring.Bitmap[RequestIndex]
+	dirtyChunks             typedRoaring.Bitmap[RequestIndex]
+	dirtyChunkIters         btree.Map[pieceIndex, []typedRoaring.Iterator[RequestIndex]]
+	dirtyChunkIterSlicePool [][]typedRoaring.Iterator[RequestIndex]
 
 	pex pexState
 
@@ -390,11 +393,6 @@ func (t *Torrent) makePieces() {
 		beginFile := pieceFirstFileIndex(piece.torrentBeginOffset(), files)
 		endFile := pieceEndFileIndex(piece.torrentEndOffset(), files)
 		piece.files = files[beginFile:endFile]
-		piece.undirtiedChunksIter = undirtiedChunksIter{
-			TorrentDirtyChunks: &t.dirtyChunks,
-			StartRequestIndex:  piece.requestIndexOffset(),
-			EndRequestIndex:    piece.requestIndexOffset() + piece.numChunks(),
-		}
 	}
 }
 
@@ -946,6 +944,7 @@ func (t *Torrent) pendAllChunkSpecs(pieceIndex pieceIndex) {
 	t.dirtyChunks.RemoveRange(
 		uint64(t.pieceRequestIndexOffset(pieceIndex)),
 		uint64(t.pieceRequestIndexOffset(pieceIndex+1)))
+	t.resetDirtyChunkIters()
 }
 
 func (t *Torrent) pieceLength(piece pieceIndex) pp.Integer {
@@ -2511,6 +2510,46 @@ func (t *Torrent) hasStorageCap() bool {
 
 func (t *Torrent) pieceIndexOfRequestIndex(ri RequestIndex) pieceIndex {
 	return pieceIndex(ri / t.chunksPerRegularPiece())
+}
+
+func (t *Torrent) iterUndirtiedRequestIndexesInPiece(piece pieceIndex, f func(RequestIndex)) {
+	it := t.dirtyChunkIters.Iterator()
+	// Seek to the first less than or equal piece index with an iterator
+	it.SeekGE(piece + 1)
+	it.Prev()
+	bitmapIter := func() typedRoaring.Iterator[RequestIndex] {
+		if !it.Valid() {
+			// We didn't find one, so create one.
+			return t.dirtyChunks.Iterator()
+		}
+		itersAtPiece := it.Value()
+		bitmapIter := SlicePop(&itersAtPiece)
+		if len(itersAtPiece) == 0 {
+			t.dirtyChunkIters.Delete(it.Cur())
+			t.dirtyChunkIterSlicePool = append(t.dirtyChunkIterSlicePool, itersAtPiece)
+		} else {
+			t.dirtyChunkIters.Upsert(it.Cur(), itersAtPiece)
+		}
+		return bitmapIter
+	}()
+	pieceRequestIndexOffset := t.pieceRequestIndexOffset(piece)
+	iterBitmapUnsetInRange(
+		&bitmapIter,
+		pieceRequestIndexOffset, pieceRequestIndexOffset+t.pieceNumChunks(piece),
+		f,
+	)
+	nextPieceIters, ok := t.dirtyChunkIters.Get(piece + 1)
+	if !ok && len(t.dirtyChunkIterSlicePool) != 0 {
+		nextPieceIters = SlicePop(&t.dirtyChunkIterSlicePool)
+	}
+	nextPieceIters = append(nextPieceIters, bitmapIter)
+	// Store the iter we just used at the next piece index
+	t.dirtyChunkIters.Upsert(piece+1, nextPieceIters)
+}
+
+func (t *Torrent) resetDirtyChunkIters() {
+	// This clears and recycles the memory inside the data structure.
+	t.dirtyChunkIters.Reset()
 }
 
 type requestState struct {

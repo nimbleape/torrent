@@ -151,6 +151,7 @@ func TestPieceHashFailed(t *testing.T) {
 	tt.dirtyChunks.AddRange(
 		uint64(tt.pieceRequestIndexOffset(1)),
 		uint64(tt.pieceRequestIndexOffset(1)+3))
+	tt.resetDirtyChunkIters()
 	require.True(t, tt.pieceAllDirty(1))
 	tt.pieceHashed(1, false, nil)
 	// Dirty chunks should be cleared so we can try again.

@@ -207,8 +207,7 @@ func (p *Peer) getDesiredRequestState() (desired desiredRequestState) {
 			}
 			requestHeap.pieceStates[pieceIndex] = pieceExtra
 			allowedFast := p.peerAllowedFast.Contains(pieceIndex)
-			p.t.piece(pieceIndex).undirtiedChunksIter.Iter(func(ci request_strategy.ChunkIndex) {
-				r := p.t.pieceRequestIndexOffset(pieceIndex) + ci
+			p.t.iterUndirtiedRequestIndexesInPiece(pieceIndex, func(r request_strategy.RequestIndex) {
 				if !allowedFast {
 					// We must signal interest to request this. TODO: We could set interested if the
 					// peers pieces (minus the allowed fast set) overlap with our missing pieces if
