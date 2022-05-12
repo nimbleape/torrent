@@ -110,7 +110,9 @@ func (dn dirNode) Lookup(_ context.Context, name string) (fusefs.Node, error) {
 	} else {
 		fullPath = name
 	}
-	for _, f := range dn.t.Files() {
+	files := dn.t.Files()
+	for i := range files {
+		f := &files[i]
 		if f.DisplayPath() == fullPath {
 			file = f
 		}
@@ -149,7 +151,7 @@ func (rn rootNode) Lookup(ctx context.Context, name string) (_node fusefs.Node, 
 			t:        t,
 		}
 		if !info.IsDir() {
-			_node = fileNode{__node, t.Files()[0]}
+			_node = fileNode{__node, &t.Files()[0]}
 		} else {
 			_node = dirNode{__node}
 		}

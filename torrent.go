@@ -89,7 +89,7 @@ type Torrent struct {
 	// The info dict. nil if we don't have it (yet).
 	info      *metainfo.Info
 	fileIndex segments.Index
-	files     *[]*File
+	files     Option[[]File]
 
 	_chunksPerRegularPiece chunkIndexType
 
@@ -390,7 +390,7 @@ func (t *Torrent) makePieces() {
 		piece.index = pieceIndex(i)
 		piece.noPendingWrites.L = &piece.pendingWritesMutex
 		piece.hash = (*metainfo.Hash)(unsafe.Pointer(&hash[0]))
-		files := *t.files
+		files := t.files.Value()
 		beginFile := pieceFirstFileIndex(piece.torrentBeginOffset(), files)
 		endFile := pieceEndFileIndex(piece.torrentEndOffset(), files)
 		piece.files = files[beginFile:endFile]
@@ -399,7 +399,7 @@ func (t *Torrent) makePieces() {
 
 // Returns the index of the first file containing the piece. files must be
 // ordered by offset.
-func pieceFirstFileIndex(pieceOffset int64, files []*File) int {
+func pieceFirstFileIndex(pieceOffset int64, files []File) int {
 	for i, f := range files {
 		if f.offset+f.length > pieceOffset {
 			return i
@@ -410,7 +410,7 @@ func pieceFirstFileIndex(pieceOffset int64, files []*File) int {
 
 // Returns the index after the last file containing the piece. files must be
 // ordered by offset.
-func pieceEndFileIndex(pieceEndOffset int64, files []*File) int {
+func pieceEndFileIndex(pieceEndOffset int64, files []File) int {
 	for i, f := range files {
 		if f.offset+f.length >= pieceEndOffset {
 			return i + 1

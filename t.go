@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/anacrolix/chansync/events"
+	"github.com/anacrolix/generics"
 	"github.com/anacrolix/missinggo/v2/pubsub"
 	"github.com/anacrolix/sync"
 
@@ -208,10 +209,11 @@ func (t *Torrent) cancelPiecesLocked(begin, end pieceIndex, reason string) {
 }
 
 func (t *Torrent) initFiles() {
+	infoFiles := t.info.UpvertedFiles()
+	files := make([]File, len(infoFiles))
 	var offset int64
-	t.files = new([]*File)
-	for _, fi := range t.info.UpvertedFiles() {
-		*t.files = append(*t.files, &File{
+	for i, fi := range infoFiles {
+		files[i] = File{
 			t,
 			strings.Join(append([]string{t.info.BestName()}, fi.BestPath()...), "/"),
 			offset,
@@ -219,15 +221,15 @@ func (t *Torrent) initFiles() {
 			fi,
 			fi.DisplayPath(t.info),
 			PiecePriorityNone,
-		})
+		}
 		offset += fi.Length
 	}
+	t.files = generics.Some(files)
 }
 
-// Returns handles to the files in the torrent. This requires that the Info is
-// available first.
-func (t *Torrent) Files() []*File {
-	return *t.files
+// Returns handles to the files in the torrent. This requires that the Info is available first.
+func (t *Torrent) Files() []File {
+	return t.files.Value()
 }
 
 func (t *Torrent) AddPeers(pp []PeerInfo) (n int) {

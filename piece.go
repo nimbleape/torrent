@@ -16,7 +16,7 @@ type Piece struct {
 	hash  *metainfo.Hash
 	t     *Torrent
 	index pieceIndex
-	files []*File
+	files []File
 
 	readerCond chansync.BroadcastCond
 
