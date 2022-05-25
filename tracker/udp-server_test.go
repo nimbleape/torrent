@@ -22,7 +22,7 @@ type torrent struct {
 type server struct {
 	pc    net.PacketConn
 	conns map[int64]struct{}
-	t     map[[20]byte]torrent
+	t     map[[32]byte]torrent
 }
 
 func marshal(parts ...interface{}) (ret []byte, err error) {

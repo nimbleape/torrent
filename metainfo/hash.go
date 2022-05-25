@@ -1,15 +1,15 @@
 package metainfo
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding"
 	"encoding/hex"
 	"fmt"
 )
 
-const HashSize = 20
+const HashSize = 32
 
-// 20-byte SHA1 hash used for info and pieces.
+// 32-byte SHA256 hash used for info and pieces.
 type Hash [HashSize]byte
 
 var _ fmt.Formatter = (*Hash)(nil)
@@ -73,7 +73,7 @@ func NewHashFromHex(s string) (h Hash) {
 }
 
 func HashBytes(b []byte) (ret Hash) {
-	hasher := sha1.New()
+	hasher := sha256.New()
 	hasher.Write(b)
 	copy(ret[:], hasher.Sum(nil))
 	return

@@ -53,7 +53,7 @@ type AnnounceResponseHeader struct {
 	Seeders  int32
 }
 
-type InfoHash = [20]byte
+type InfoHash = [32]byte
 
 func marshal(data interface{}) (b []byte, err error) {
 	var buf bytes.Buffer

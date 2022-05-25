@@ -1,13 +1,13 @@
 package metainfo
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"io"
 )
 
 func GeneratePieces(r io.Reader, pieceLength int64, b []byte) ([]byte, error) {
 	for {
-		h := sha1.New()
+		h := sha256.New()
 		written, err := io.CopyN(h, r, pieceLength)
 		if written > 0 {
 			b = h.Sum(b)

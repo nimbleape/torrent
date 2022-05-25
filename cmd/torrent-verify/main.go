@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -48,7 +48,7 @@ func verifyTorrent(info *metainfo.Info, root string) error {
 	span.InitIndex()
 	for i, numPieces := 0, info.NumPieces(); i < numPieces; i += 1 {
 		p := info.Piece(i)
-		hash := sha1.New()
+		hash := sha256.New()
 		_, err := io.Copy(hash, io.NewSectionReader(span, p.Offset(), p.Length()))
 		if err != nil {
 			return err

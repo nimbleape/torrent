@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -375,8 +375,8 @@ func (t *Torrent) metadataSize() int {
 }
 
 func infoPieceHashes(info *metainfo.Info) (ret [][]byte) {
-	for i := 0; i < len(info.Pieces); i += sha1.Size {
-		ret = append(ret, info.Pieces[i:i+sha1.Size])
+	for i := 0; i < len(info.Pieces); i += sha256.Size {
+		ret = append(ret, info.Pieces[i:i+sha256.Size])
 	}
 	return
 }

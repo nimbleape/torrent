@@ -47,7 +47,7 @@ func binaryToJsonString(b []byte) string {
 	return string(seq)
 }
 
-func jsonStringToInfoHash(s string) (ih [20]byte, err error) {
+func jsonStringToInfoHash(s string) (ih [32]byte, err error) {
 	b, err := decodeJsonByteString(s, ih[:0])
 	if err != nil {
 		return

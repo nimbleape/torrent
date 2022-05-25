@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"expvar"
@@ -288,7 +288,7 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 	cl.websocketTrackers = websocketTrackers{
 		PeerId: cl.peerID,
 		Logger: cl.logger,
-		GetAnnounceRequest: func(event tracker.AnnounceEvent, infoHash [20]byte) (tracker.AnnounceRequest, error) {
+		GetAnnounceRequest: func(event tracker.AnnounceEvent, infoHash [32]byte) (tracker.AnnounceRequest, error) {
 			cl.lock()
 			defer cl.unlock()
 			t, ok := cl.torrents[infoHash]
@@ -1198,7 +1198,7 @@ func (cl *Client) newTorrentOpt(opts AddTorrentOpts) (t *Torrent) {
 		webSeeds:     make(map[string]*Peer),
 		gotMetainfoC: make(chan struct{}),
 	}
-	t.smartBanCache.Hash = sha1.Sum
+	t.smartBanCache.Hash = sha256.Sum256
 	t.smartBanCache.Init()
 	t.networkingEnabled.Set()
 	t.logger = cl.logger.WithContextValue(t).WithNames("torrent", t.infoHash.HexString())

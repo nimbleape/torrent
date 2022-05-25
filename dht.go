@@ -13,12 +13,12 @@ import (
 // for torrent-use that might not be the default behaviour for the DHT server.
 type DhtServer interface {
 	Stats() interface{}
-	ID() [20]byte
+	ID() [32]byte
 	Addr() net.Addr
 	AddNode(ni krpc.NodeInfo) error
 	// This is called asynchronously when receiving PORT messages.
 	Ping(addr *net.UDPAddr)
-	Announce(hash [20]byte, port int, impliedPort bool) (DhtAnnounce, error)
+	Announce(hash [32]byte, port int, impliedPort bool) (DhtAnnounce, error)
 	WriteStatus(io.Writer)
 }
 
@@ -48,7 +48,7 @@ func (me anacrolixDhtAnnounceWrapper) Peers() <-chan dht.PeersValues {
 	return me.Announce.Peers
 }
 
-func (me AnacrolixDhtServerWrapper) Announce(hash [20]byte, port int, impliedPort bool) (DhtAnnounce, error) {
+func (me AnacrolixDhtServerWrapper) Announce(hash [32]byte, port int, impliedPort bool) (DhtAnnounce, error) {
 	ann, err := me.Server.Announce(hash, port, impliedPort)
 	return anacrolixDhtAnnounceWrapper{ann}, err
 }

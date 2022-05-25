@@ -2,7 +2,7 @@ package torrent
 
 import (
 	"bytes"
-	"crypto/sha1"
+	"crypto/sha256"
 	"net/netip"
 
 	"github.com/anacrolix/generics"
@@ -11,7 +11,7 @@ import (
 
 type bannableAddr = netip.Addr
 
-type smartBanCache = smartban.Cache[bannableAddr, RequestIndex, [sha1.Size]byte]
+type smartBanCache = smartban.Cache[bannableAddr, RequestIndex, [sha256.Size]byte]
 
 type blockCheckingWriter struct {
 	cache        *smartBanCache

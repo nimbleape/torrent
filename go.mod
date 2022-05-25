@@ -14,7 +14,7 @@ require (
 	github.com/anacrolix/fuse v0.2.0
 	github.com/anacrolix/generics v0.0.0-20220510042907-b50562b436ec
 	github.com/anacrolix/go-libutp v1.2.0
-	github.com/anacrolix/log v0.13.1
+	github.com/anacrolix/log v0.13.2-0.20220426014722-7b7d13a55d55
 	github.com/anacrolix/missinggo v1.3.0
 	github.com/anacrolix/missinggo/perf v1.0.0
 	github.com/anacrolix/missinggo/v2 v2.7.0
@@ -47,6 +47,8 @@ require (
 	go.etcd.io/bbolt v1.3.6
 	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
 )
+
+replace github.com/anacrolix/dht/v2 => ../dht
 
 require (
 	github.com/alexflint/go-scalar v1.1.0 // indirect

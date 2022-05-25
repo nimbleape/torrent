@@ -24,7 +24,7 @@ type TrackerClientStats struct {
 // Client represents the webtorrent client
 type TrackerClient struct {
 	Url                string
-	GetAnnounceRequest func(_ tracker.AnnounceEvent, infoHash [20]byte) (tracker.AnnounceRequest, error)
+	GetAnnounceRequest func(_ tracker.AnnounceEvent, infoHash [32]byte) (tracker.AnnounceRequest, error)
 	PeerId             [20]byte
 	OnConn             onDataChannelOpen
 	Logger             log.Logger
@@ -54,7 +54,7 @@ type outboundOffer struct {
 	originalOffer  webrtc.SessionDescription
 	peerConnection *wrappedPeerConnection
 	dataChannel    *webrtc.DataChannel
-	infoHash       [20]byte
+	infoHash       [32]byte
 }
 
 type DataChannelContext struct {
@@ -62,7 +62,7 @@ type DataChannelContext struct {
 	Local, Remote webrtc.SessionDescription
 	OfferId       string
 	LocalOffered  bool
-	InfoHash      [20]byte
+	InfoHash      [32]byte
 	// This is private as some methods might not be appropriate with data channel context.
 	peerConnection *wrappedPeerConnection
 }
@@ -187,7 +187,7 @@ func (tc *TrackerClient) closeUnusedOffers() {
 	tc.outboundOffers = nil
 }
 
-func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte) error {
+func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [32]byte) error {
 	metrics.Add("outbound announces", 1)
 	var randOfferId [20]byte
 	_, err := rand.Read(randOfferId[:])
@@ -287,7 +287,7 @@ func (tc *TrackerClient) trackerReadLoop(tracker *websocket.Conn) error {
 func (tc *TrackerClient) handleOffer(
 	offer webrtc.SessionDescription,
 	offerId string,
-	infoHash [20]byte,
+	infoHash [32]byte,
 	peerId string,
 ) error {
 	peerConnection, answer, err := newAnsweringPeerConnection(offer)

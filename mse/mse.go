@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rc4"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"expvar"
@@ -56,7 +56,7 @@ func init() {
 }
 
 func hash(parts ...[]byte) []byte {
-	h := sha1.New()
+	h := sha256.New()
 	for _, p := range parts {
 		n, err := h.Write(p)
 		if err != nil {
@@ -442,8 +442,8 @@ func (h *handshake) receiverSteps() (ret io.ReadWriter, chosen CryptoMethod, err
 		return
 	}
 	expectedHash := hash(req3, h.s[:])
-	eachHash := sha1.New()
-	var sum, xored [sha1.Size]byte
+	eachHash := sha256.New()
+	var sum, xored [sha256.Size]byte
 	err = ErrNoSecretKeyMatch
 	h.skeys(func(skey []byte) bool {
 		eachHash.Reset()
