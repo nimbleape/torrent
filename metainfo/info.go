@@ -128,7 +128,7 @@ func (info *Info) TotalLength() (ret int64) {
 }
 
 func (info *Info) NumPieces() int {
-	return len(info.Pieces) / 20
+	return len(info.Pieces) / 32
 }
 
 func (info *Info) IsDir() bool {

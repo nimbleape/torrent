@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	pieceHash        = crypto.SHA1
+	pieceHash        = crypto.SHA256
 	defaultChunkSize = 0x4000 // 16KiB
 
 	// Arbitrary maximum of "metadata_size" (see https://www.bittorrent.org/beps/bep_0009.html)
