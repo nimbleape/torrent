@@ -20,7 +20,7 @@ type Decoder struct {
 func (d *Decoder) Decode(msg *Message) (err error) {
 	var length Integer
 	err = length.Read(d.R)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return fmt.Errorf("reading message length: %w", err)
 	}
 	if length > d.MaxLength {

@@ -977,7 +977,7 @@ func (cl *Client) runHandshookConn(c *PeerConn, t *Torrent) error {
 	cl.sendInitialMessages(c, t)
 	c.initUpdateRequestsTimer()
 	err := c.mainReadLoop()
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return fmt.Errorf("main read loop: %w", err)
 	}
 	return nil
