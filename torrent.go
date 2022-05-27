@@ -1918,8 +1918,7 @@ func (t *Torrent) addPeerConn(c *PeerConn) (err error) {
 	if len(t.conns) >= t.maxEstablishedConns {
 		c := t.worstBadConn()
 		if c == nil {
-			// return errors.New("don't want conns")
-			return nil
+			return errors.New("don't want conns")
 		}
 		c.close()
 		t.deletePeerConn(c)
