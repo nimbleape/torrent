@@ -517,6 +517,13 @@ func (cn *Peer) nominalMaxRequests() maxRequests {
 	return maxInt(1, minInt(cn.PeerMaxRequests, cn.peakRequests*2, maxLocalToRemoteRequests))
 }
 
+func (cn *Peer) TotalExpectingTime() time.Duration {
+	cn.locker().RLock()
+	defer cn.locker().RUnlock()
+
+	return cn.totalExpectingTime()
+}
+
 func (cn *Peer) totalExpectingTime() (ret time.Duration) {
 	ret = cn.cumulativeExpectedToReceiveChunks
 	if !cn.lastStartedExpectingToReceiveChunks.IsZero() {
