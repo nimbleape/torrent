@@ -64,6 +64,8 @@ type TrackerClient struct {
 
 	WebsocketTrackerHttpHeader func() http.Header
 	ICEServers                 []webrtc.ICEServer
+
+	transportStats []webrtc.StatsReport
 }
 
 func (me *TrackerClient) Stats() TrackerClientStats {
@@ -274,16 +276,22 @@ func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte
 		return fmt.Errorf("creating offer: %w", err)
 	}
 
-	err = tc.announce(event, infoHash, []outboundOffer{
-		{
-			offerId: offerIDBinary,
-			outboundOfferValue: outboundOfferValue{
-				originalOffer:  offer,
-				peerConnection: pc,
-				infoHash:       infoHash,
-				dataChannel:    dc,
-			},
-		},
+	pc.OnClose(func() {
+		stats := pc.GetStats()
+		if tc.transportStats == nil {
+			tc.transportStats = []webrtc.StatsReport{}
+		}
+		tc.transportStats = append(tc.transportStats, stats)
+	})
+
+	err = tc.announce(event, infoHash, []outboundOffer{{
+		offerId: offerIDBinary,
+		outboundOfferValue: outboundOfferValue{
+			originalOffer:  offer,
+			peerConnection: pc,
+			infoHash:       infoHash,
+			dataChannel:    dc,
+		}},
 	})
 	if err != nil {
 		dc.Close()
@@ -355,6 +363,10 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 		g.MakeMapIfNilAndSet(&tc.outboundOffers, offer.offerId, offer.outboundOfferValue)
 	}
 	return nil
+}
+
+func (tc *TrackerClient) TransportStats() []webrtc.StatsReport {
+	return tc.transportStats
 }
 
 func (tc *TrackerClient) writeMessage(data []byte) error {
