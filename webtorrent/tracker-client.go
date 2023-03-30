@@ -45,6 +45,7 @@ type TrackerClient struct {
 	WebsocketTrackerHttpHeader func() http.Header
 
 	transportStats []webrtc.StatsReport
+	ICEServers     []string
 }
 
 func (me *TrackerClient) Stats() TrackerClientStats {
