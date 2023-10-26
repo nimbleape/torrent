@@ -19,6 +19,12 @@ import (
 	"github.com/anacrolix/torrent/version"
 )
 
+type Observers struct {
+	Trackers struct {
+		ConnStatus chan string
+	}
+}
+
 // Contains config elements that are exclusive to tracker handling. There may be other fields in
 // ClientConfig that are also relevant.
 type ClientTrackerConfig struct {
@@ -31,6 +37,7 @@ type ClientTrackerConfig struct {
 	// Takes a tracker's hostname and requests DNS A and AAAA records.
 	// Used in case DNS lookups require a special setup (i.e., dns-over-https)
 	LookupTrackerIp func(*url.URL) ([]net.IP, error)
+	Observers       *Observers
 }
 
 type ClientDhtConfig struct {

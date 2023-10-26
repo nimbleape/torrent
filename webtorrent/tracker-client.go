@@ -33,6 +33,7 @@ type TrackerClient struct {
 	OnConn             onDataChannelOpen
 	Logger             log.Logger
 	Dialer             *websocket.Dialer
+	Observers          *struct{ ConnStatus chan string }
 
 	mu             sync.Mutex
 	cond           sync.Cond
@@ -98,6 +99,9 @@ func (tc *TrackerClient) doWebsocket() error {
 
 	c, _, err := tc.Dialer.Dial(tc.Url, header)
 	if err != nil {
+		if tc.Observers != nil {
+			tc.Observers.ConnStatus <- "bar"
+		}
 		return fmt.Errorf("dialing tracker: %w", err)
 	}
 	defer c.Close()

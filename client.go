@@ -290,7 +290,12 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 		}
 	}
 
+	var obs *struct{ ConnStatus chan string }
+	if cl.config.Observers != nil {
+		obs = &cl.config.Observers.Trackers
+	}
 	cl.websocketTrackers = websocketTrackers{
+		obs:    obs,
 		PeerId: cl.peerID,
 		Logger: cl.logger,
 		GetAnnounceRequest: func(event tracker.AnnounceEvent, infoHash [20]byte) (tracker.AnnounceRequest, error) {
