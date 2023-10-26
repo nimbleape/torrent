@@ -19,6 +19,15 @@ import (
 	"github.com/anacrolix/torrent/tracker"
 )
 
+type TrackerStatus struct {
+	Url string
+	Err error
+}
+
+type TrackerObserver struct {
+	ConnStatus chan TrackerStatus
+}
+
 type TrackerClientStats struct {
 	Dials                  int64
 	ConvertedInboundConns  int64
@@ -33,7 +42,7 @@ type TrackerClient struct {
 	OnConn             onDataChannelOpen
 	Logger             log.Logger
 	Dialer             *websocket.Dialer
-	Observers          *struct{ ConnStatus chan string }
+	Observers          *TrackerObserver
 
 	mu             sync.Mutex
 	cond           sync.Cond
@@ -100,7 +109,7 @@ func (tc *TrackerClient) doWebsocket() error {
 	c, _, err := tc.Dialer.Dial(tc.Url, header)
 	if err != nil {
 		if tc.Observers != nil {
-			tc.Observers.ConnStatus <- "bar"
+			tc.Observers.ConnStatus <- TrackerStatus{tc.Url, err}
 		}
 		return fmt.Errorf("dialing tracker: %w", err)
 	}

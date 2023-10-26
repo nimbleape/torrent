@@ -10,6 +10,7 @@ import (
 	"errors"
 	"expvar"
 	"fmt"
+	"github.com/anacrolix/torrent/webtorrent"
 	"io"
 	"math"
 	"net"
@@ -48,7 +49,6 @@ import (
 	"github.com/anacrolix/torrent/storage"
 	"github.com/anacrolix/torrent/tracker"
 	"github.com/anacrolix/torrent/types/infohash"
-	"github.com/anacrolix/torrent/webtorrent"
 )
 
 // Clients contain zero or more Torrents. A Client manages a blocklist, the
@@ -290,7 +290,7 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 		}
 	}
 
-	var obs *struct{ ConnStatus chan string }
+	var obs *webtorrent.TrackerObserver
 	if cl.config.Observers != nil {
 		obs = &cl.config.Observers.Trackers
 	}

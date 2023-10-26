@@ -3,6 +3,7 @@ package torrent
 import (
 	"context"
 	"fmt"
+	"github.com/anacrolix/torrent/webtorrent"
 	"net"
 	netHttp "net/http"
 	"net/url"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/anacrolix/torrent/tracker"
 	httpTracker "github.com/anacrolix/torrent/tracker/http"
-	"github.com/anacrolix/torrent/webtorrent"
 )
 
 type websocketTrackerStatus struct {
@@ -42,7 +42,7 @@ type websocketTrackers struct {
 	OnConn                     func(datachannel.ReadWriteCloser, webtorrent.DataChannelContext)
 	mu                         sync.Mutex
 	clients                    map[string]*refCountedWebtorrentTrackerClient
-	obs                        *struct{ ConnStatus chan string }
+	obs                        *webtorrent.TrackerObserver
 	Proxy                      httpTracker.ProxyFunc
 	DialContext                func(ctx context.Context, network, addr string) (net.Conn, error)
 	WebsocketTrackerHttpHeader func() netHttp.Header

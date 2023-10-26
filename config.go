@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"context"
+	"github.com/anacrolix/torrent/webtorrent"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,9 +21,7 @@ import (
 )
 
 type Observers struct {
-	Trackers struct {
-		ConnStatus chan string
-	}
+	Trackers webtorrent.TrackerObserver
 }
 
 // Contains config elements that are exclusive to tracker handling. There may be other fields in

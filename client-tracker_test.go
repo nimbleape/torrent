@@ -2,7 +2,9 @@ package torrent
 
 import (
 	"github.com/anacrolix/torrent/internal/testutil"
+	"github.com/anacrolix/torrent/webtorrent"
 	"github.com/stretchr/testify/require"
+	"net"
 	"os"
 	"testing"
 )
@@ -11,7 +13,9 @@ func TestClientInvalidTracker(t *testing.T) {
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
 	cfg.Observers = &Observers{
-		Trackers: struct{ ConnStatus chan string }{ConnStatus: make(chan string)},
+		Trackers: webtorrent.TrackerObserver{
+			ConnStatus: make(chan webtorrent.TrackerStatus),
+		},
 	}
 
 	cl, err := NewClient(cfg)
@@ -28,7 +32,10 @@ func TestClientInvalidTracker(t *testing.T) {
 	to, err := cl.AddTorrent(mi)
 	require.NoError(t, err)
 
-	require.Equal(t, "bar", <-cfg.Observers.Trackers.ConnStatus)
+	status := <-cfg.Observers.Trackers.ConnStatus
+	require.Equal(t, "ws://test.invalid:4242", status.Url)
+	var expected *net.OpError
+	require.ErrorAs(t, expected, &status.Err)
 
 	to.Drop()
 }
