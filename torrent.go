@@ -170,6 +170,9 @@ type Torrent struct {
 	// Large allocations reused between request state updates.
 	requestPieceStates []request_strategy.PieceRequestOrderState
 	requestIndexes     []RequestIndex
+
+	// TODO something like this
+	onPeerConnUpdate func()
 }
 
 type outgoingConnAttemptKey = *PeerInfo

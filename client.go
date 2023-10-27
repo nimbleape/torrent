@@ -1312,6 +1312,8 @@ func (cl *Client) newTorrentOpt(opts AddTorrentOpts) (t *Torrent) {
 		opts.ChunkSize = defaultChunkSize
 	}
 	t.setChunkSize(opts.ChunkSize)
+	// TODO this function should be defined by the library user and passed here somehow
+	t.onPeerConnUpdate = cl.config.OnPeerConnUpdate
 	return
 }
 
