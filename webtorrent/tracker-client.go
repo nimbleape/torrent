@@ -26,7 +26,8 @@ type TrackerStatus struct {
 }
 
 type TrackerObserver struct {
-	ConnStatus chan interface{}
+	ConnStatus     chan TrackerStatus
+	AnnounceStatus chan TrackerStatus
 }
 
 type TrackerClientStats struct {
@@ -109,7 +110,7 @@ func (tc *TrackerClient) doWebsocket() error {
 
 	c, _, err := tc.Dialer.Dial(tc.Url, header)
 	if err != nil {
-		tc.updateTrackerStatus(TrackerStatus{tc.Url, false, err})
+		tc.updateTrackerConnStatus(TrackerStatus{tc.Url, false, err})
 		return fmt.Errorf("dialing tracker: %w", err)
 	}
 	defer c.Close()
@@ -136,7 +137,7 @@ func (tc *TrackerClient) doWebsocket() error {
 			}
 		}
 	}()
-	tc.updateTrackerStatus(TrackerStatus{tc.Url, true, nil})
+	tc.updateTrackerConnStatus(TrackerStatus{tc.Url, true, nil})
 	err = tc.trackerReadLoop(tc.wsConn)
 	close(closeChan)
 	tc.mu.Lock()
@@ -145,9 +146,15 @@ func (tc *TrackerClient) doWebsocket() error {
 	return err
 }
 
-func (tc *TrackerClient) updateTrackerStatus(status TrackerStatus) {
+func (tc *TrackerClient) updateTrackerConnStatus(status TrackerStatus) {
 	if tc.Observers != nil {
 		tc.Observers.ConnStatus <- status
+	}
+}
+
+func (tc *TrackerClient) updateTrackerAnnounceStatus(status TrackerStatus) {
+	if tc.Observers != nil {
+		tc.Observers.AnnounceStatus <- status
 	}
 }
 
@@ -273,6 +280,11 @@ func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte
 
 func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte, offers []outboundOffer) error {
 	request, err := tc.GetAnnounceRequest(event, infoHash)
+	tc.updateTrackerAnnounceStatus(TrackerStatus{
+		Url: tc.Url,
+		Ok:  err == nil,
+		Err: err,
+	})
 	if err != nil {
 		return fmt.Errorf("getting announce parameters: %w", err)
 	}

@@ -19,7 +19,8 @@ func TestClientInvalidTracker(t *testing.T) {
 	cfg.DisableTrackers = false
 	cfg.Observers = &Observers{
 		Trackers: webtorrent.TrackerObserver{
-			ConnStatus: make(chan interface{}),
+			ConnStatus:     make(chan webtorrent.TrackerStatus),
+			AnnounceStatus: make(chan webtorrent.TrackerStatus),
 		},
 	}
 
@@ -66,16 +67,15 @@ func testtracker(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestClientValidTrackerConn(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(testtracker))
+	s, trackerUrl := startTestTracker()
 	defer s.Close()
-
-	trackerUrl := "ws" + strings.TrimPrefix(s.URL, "http")
 
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
 	cfg.Observers = &Observers{
 		Trackers: webtorrent.TrackerObserver{
-			ConnStatus: make(chan interface{}),
+			ConnStatus:     make(chan webtorrent.TrackerStatus),
+			AnnounceStatus: make(chan webtorrent.TrackerStatus),
 		},
 	}
 
@@ -101,7 +101,42 @@ func TestClientValidTrackerConn(t *testing.T) {
 	to.Drop()
 }
 
-func readChannelTimeout(t *testing.T, channel chan interface{}, duration time.Duration) interface{} {
+func TestClientAnnounceSuccess(t *testing.T) {
+	s, trackerUrl := startTestTracker()
+	defer s.Close()
+
+	cfg := TestingConfig(t)
+	cfg.DisableTrackers = false
+	cfg.Observers = &Observers{
+		Trackers: webtorrent.TrackerObserver{
+			ConnStatus:     make(chan webtorrent.TrackerStatus),
+			AnnounceStatus: make(chan webtorrent.TrackerStatus),
+		},
+	}
+
+	cl, err := NewClient(cfg)
+	require.NoError(t, err)
+	defer cl.Close()
+
+	dir, mi := testutil.GreetingTestTorrent()
+	defer os.RemoveAll(dir)
+
+	mi.AnnounceList = [][]string{
+		{trackerUrl},
+	}
+
+	to, err := cl.AddTorrent(mi)
+	require.NoError(t, err)
+
+	status := readChannelTimeout(t, cfg.Observers.Trackers.AnnounceStatus, 500*time.Millisecond).(webtorrent.TrackerStatus)
+	require.Equal(t, trackerUrl, status.Url)
+	require.True(t, status.Ok)
+	require.Nil(t, status.Err)
+
+	to.Drop()
+}
+
+func readChannelTimeout[T any](t *testing.T, channel chan T, duration time.Duration) interface{} {
 	select {
 	case s := <-channel:
 		return s
@@ -109,4 +144,10 @@ func readChannelTimeout(t *testing.T, channel chan interface{}, duration time.Du
 		require.Fail(t, "Timeout reading observer channel.")
 	}
 	return nil
+}
+
+func startTestTracker() (*httptest.Server, string) {
+	s := httptest.NewServer(http.HandlerFunc(testtracker))
+	trackerUrl := "ws" + strings.TrimPrefix(s.URL, "http")
+	return s, trackerUrl
 }

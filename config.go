@@ -22,6 +22,8 @@ import (
 
 type Observers struct {
 	Trackers webtorrent.TrackerObserver
+	// TODO: Peers observers?
+	// Peers PeersObserver
 }
 
 // Contains config elements that are exclusive to tracker handling. There may be other fields in
