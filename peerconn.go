@@ -32,6 +32,14 @@ import (
 	utHolepunch "github.com/anacrolix/torrent/peer_protocol/ut-holepunch"
 )
 
+type PeerConnStateMessageType int
+
+const (
+	PeerConnConnected    PeerConnStateMessageType = 1
+	PeerConnDisconnected PeerConnStateMessageType = 0
+	// TODO more
+)
+
 // Maintains the state of a BitTorrent-protocol based connection with a peer.
 type PeerConn struct {
 	Peer
@@ -69,6 +77,9 @@ type PeerConn struct {
 	peerRequestDataAllocLimiter alloclim.Limiter
 
 	outstandingHolepunchingRendezvous map[netip.AddrPort]struct{}
+
+	// TODO something like this
+	StateUpdate chan PeerConnStateMessageType
 }
 
 func (cn *PeerConn) pexStatus() string {
