@@ -21,11 +21,12 @@ import (
 
 type TrackerStatus struct {
 	Url string
+	Ok  bool
 	Err error
 }
 
 type TrackerObserver struct {
-	ConnStatus chan TrackerStatus
+	ConnStatus chan interface{}
 }
 
 type TrackerClientStats struct {
@@ -108,9 +109,7 @@ func (tc *TrackerClient) doWebsocket() error {
 
 	c, _, err := tc.Dialer.Dial(tc.Url, header)
 	if err != nil {
-		if tc.Observers != nil {
-			tc.Observers.ConnStatus <- TrackerStatus{tc.Url, err}
-		}
+		tc.updateTrackerStatus(TrackerStatus{tc.Url, false, err})
 		return fmt.Errorf("dialing tracker: %w", err)
 	}
 	defer c.Close()
@@ -137,12 +136,19 @@ func (tc *TrackerClient) doWebsocket() error {
 			}
 		}
 	}()
+	tc.updateTrackerStatus(TrackerStatus{tc.Url, true, nil})
 	err = tc.trackerReadLoop(tc.wsConn)
 	close(closeChan)
 	tc.mu.Lock()
 	c.Close()
 	tc.mu.Unlock()
 	return err
+}
+
+func (tc *TrackerClient) updateTrackerStatus(status TrackerStatus) {
+	if tc.Observers != nil {
+		tc.Observers.ConnStatus <- status
+	}
 }
 
 // Finishes initialization and spawns the run routine, calling onStop when it completes with the
