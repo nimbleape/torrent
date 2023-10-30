@@ -10,7 +10,6 @@ import (
 	"errors"
 	"expvar"
 	"fmt"
-	"github.com/anacrolix/torrent/webtorrent"
 	"io"
 	"math"
 	"net"
@@ -19,6 +18,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/anacrolix/torrent/webtorrent"
 
 	"github.com/anacrolix/chansync"
 	"github.com/anacrolix/chansync/events"
@@ -1088,10 +1089,11 @@ func (cl *Client) runHandshookConn(c *PeerConn, t *Torrent) error {
 
 	// TODO here we could send an update to say the PeerConn state connected is true
 	// perhaps could also use c.pex.IsEnabled() or something similar
-	c.StateUpdate <- PeerConnConnected
+	c.UpdatePeerConnStatus(PeerStatus{c.PeerID, true, nil})
 
 	err := c.mainReadLoop()
 	if err != nil {
+		c.UpdatePeerConnStatus(PeerStatus{c.PeerID, false, err})
 		return fmt.Errorf("main read loop: %w", err)
 	}
 	return nil
@@ -1580,6 +1582,7 @@ type newConnectionOpts struct {
 	localPublicAddr peerLocalPublicAddr
 	network         string
 	connString      string
+	obs             *PeerObserver
 }
 
 func (cl *Client) newConnection(nc net.Conn, opts newConnectionOpts) (c *PeerConn) {
@@ -1600,6 +1603,7 @@ func (cl *Client) newConnection(nc net.Conn, opts newConnectionOpts) (c *PeerCon
 		},
 		connString: opts.connString,
 		conn:       nc,
+		Observers:  opts.obs,
 	}
 	c.peerRequestDataAllocLimiter.Max = cl.config.MaxAllocPeerRequestDataPerConn
 	c.initRequestState()

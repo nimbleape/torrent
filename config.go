@@ -2,11 +2,12 @@ package torrent
 
 import (
 	"context"
-	"github.com/anacrolix/torrent/webtorrent"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/anacrolix/torrent/webtorrent"
 
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
@@ -23,7 +24,7 @@ import (
 type Observers struct {
 	Trackers webtorrent.TrackerObserver
 	// TODO: Peers observers?
-	// Peers PeersObserver
+	Peers PeerObserver
 }
 
 // Contains config elements that are exclusive to tracker handling. There may be other fields in
