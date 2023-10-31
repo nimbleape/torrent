@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TODO ideally we'd run both peers locally for these tests,
+// and transfer a very small file
+
 func TestPeerConnEstablished(t *testing.T) {
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
