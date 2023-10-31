@@ -725,6 +725,11 @@ func doProtocolHandshakeOnDialResult(
 	cl := t.cl
 	nc := dr.Conn
 	addrIpPort, _ := tryIpPortFromNetAddr(addr)
+
+	var obs *PeerObserver
+	if t.cl.config.Observers != nil {
+		obs = &t.cl.config.Observers.Peers
+	}
 	c, err = cl.initiateProtocolHandshakes(
 		context.Background(), nc, t, obfuscatedHeader,
 		newConnectionOpts{
@@ -734,6 +739,7 @@ func doProtocolHandshakeOnDialResult(
 			localPublicAddr: cl.publicAddr(addrIpPort.IP),
 			network:         dr.Dialer.DialerNetwork(),
 			connString:      regularNetConnPeerConnConnString(nc),
+			obs:             obs,
 		})
 	if err != nil {
 		nc.Close()
@@ -1319,8 +1325,6 @@ func (cl *Client) newTorrentOpt(opts AddTorrentOpts) (t *Torrent) {
 		opts.ChunkSize = defaultChunkSize
 	}
 	t.setChunkSize(opts.ChunkSize)
-	// TODO this function should be defined by the library user and passed here somehow
-	t.onPeerConnUpdate = cl.config.OnPeerConnUpdate
 	return
 }
 
