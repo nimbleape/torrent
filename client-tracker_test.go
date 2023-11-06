@@ -136,16 +136,6 @@ func TestClientAnnounceSuccess(t *testing.T) {
 	to.Drop()
 }
 
-func readChannelTimeout[T any](t *testing.T, channel chan T, duration time.Duration) interface{} {
-	select {
-	case s := <-channel:
-		return s
-	case <-time.After(duration):
-		require.Fail(t, "Timeout reading observer channel.")
-	}
-	return nil
-}
-
 func startTestTracker() (*httptest.Server, string) {
 	s := httptest.NewServer(http.HandlerFunc(testtracker))
 	trackerUrl := "ws" + strings.TrimPrefix(s.URL, "http")
