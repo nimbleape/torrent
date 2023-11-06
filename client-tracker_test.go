@@ -1,7 +1,9 @@
 package torrent
 
 import (
+	"errors"
 	"github.com/anacrolix/torrent/internal/testutil"
+	"github.com/anacrolix/torrent/tracker"
 	"github.com/anacrolix/torrent/webtorrent"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -97,6 +99,45 @@ func TestClientValidTrackerConn(t *testing.T) {
 	require.Equal(t, trackerUrl, status.Url)
 	require.True(t, status.Ok)
 	require.Nil(t, status.Err)
+
+	to.Drop()
+}
+
+func TestClientAnnounceFailure(t *testing.T) {
+	s, trackerUrl := startTestTracker()
+	defer s.Close()
+
+	cfg := TestingConfig(t)
+	cfg.DisableTrackers = false
+	cfg.Observers = &Observers{
+		Trackers: webtorrent.TrackerObserver{
+			ConnStatus:     make(chan webtorrent.TrackerStatus),
+			AnnounceStatus: make(chan webtorrent.TrackerStatus),
+		},
+	}
+
+	cl, err := NewClient(cfg)
+	require.NoError(t, err)
+	defer cl.Close()
+
+	cl.websocketTrackers.GetAnnounceRequest = func(event tracker.AnnounceEvent, infoHash [20]byte) (tracker.AnnounceRequest, error) {
+		return tracker.AnnounceRequest{}, errors.New("test error")
+	}
+
+	dir, mi := testutil.GreetingTestTorrent()
+	defer os.RemoveAll(dir)
+
+	mi.AnnounceList = [][]string{
+		{trackerUrl},
+	}
+
+	to, err := cl.AddTorrent(mi)
+	require.NoError(t, err)
+
+	status := readChannelTimeout(t, cfg.Observers.Trackers.AnnounceStatus, 500*time.Millisecond).(webtorrent.TrackerStatus)
+	require.Equal(t, trackerUrl, status.Url)
+	require.False(t, status.Ok)
+	require.EqualError(t, status.Err, "test error")
 
 	to.Drop()
 }
