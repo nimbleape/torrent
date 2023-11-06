@@ -14,11 +14,7 @@ func TestPeerConnEstablished(t *testing.T) {
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
 	cfg.EstablishedConnsPerTorrent = 1
-	cfg.Observers = &Observers{
-		Peers: PeerObserver{
-			PeerStatus: make(chan PeerStatus),
-		},
-	}
+	cfg.Observers = NewClientObservers()
 
 	c, _ := NewClient(cfg)
 	defer c.Close()

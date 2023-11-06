@@ -19,12 +19,7 @@ import (
 func TestClientInvalidTracker(t *testing.T) {
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
-	cfg.Observers = &Observers{
-		Trackers: webtorrent.TrackerObserver{
-			ConnStatus:     make(chan webtorrent.TrackerStatus),
-			AnnounceStatus: make(chan webtorrent.TrackerStatus),
-		},
-	}
+	cfg.Observers = NewClientObservers()
 
 	cl, err := NewClient(cfg)
 	require.NoError(t, err)
@@ -74,12 +69,7 @@ func TestClientValidTrackerConn(t *testing.T) {
 
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
-	cfg.Observers = &Observers{
-		Trackers: webtorrent.TrackerObserver{
-			ConnStatus:     make(chan webtorrent.TrackerStatus),
-			AnnounceStatus: make(chan webtorrent.TrackerStatus),
-		},
-	}
+	cfg.Observers = NewClientObservers()
 
 	cl, err := NewClient(cfg)
 	require.NoError(t, err)
@@ -109,12 +99,7 @@ func TestClientAnnounceFailure(t *testing.T) {
 
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
-	cfg.Observers = &Observers{
-		Trackers: webtorrent.TrackerObserver{
-			ConnStatus:     make(chan webtorrent.TrackerStatus),
-			AnnounceStatus: make(chan webtorrent.TrackerStatus),
-		},
-	}
+	cfg.Observers = NewClientObservers()
 
 	cl, err := NewClient(cfg)
 	require.NoError(t, err)
@@ -148,12 +133,7 @@ func TestClientAnnounceSuccess(t *testing.T) {
 
 	cfg := TestingConfig(t)
 	cfg.DisableTrackers = false
-	cfg.Observers = &Observers{
-		Trackers: webtorrent.TrackerObserver{
-			ConnStatus:     make(chan webtorrent.TrackerStatus),
-			AnnounceStatus: make(chan webtorrent.TrackerStatus),
-		},
-	}
+	cfg.Observers = NewClientObservers()
 
 	cl, err := NewClient(cfg)
 	require.NoError(t, err)

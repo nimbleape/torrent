@@ -26,6 +26,18 @@ type Observers struct {
 	Peers    PeerObserver
 }
 
+func NewClientObservers() *Observers {
+	return &Observers{
+		Trackers: webtorrent.TrackerObserver{
+			ConnStatus:     make(chan webtorrent.TrackerStatus),
+			AnnounceStatus: make(chan webtorrent.TrackerStatus),
+		},
+		Peers: PeerObserver{
+			PeerStatus: make(chan PeerStatus),
+		},
+	}
+}
+
 // Contains config elements that are exclusive to tracker handling. There may be other fields in
 // ClientConfig that are also relevant.
 type ClientTrackerConfig struct {
