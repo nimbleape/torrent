@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/anacrolix/torrent/webtorrent"
+
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/anacrolix/log"
@@ -18,6 +20,12 @@ import (
 	"github.com/anacrolix/torrent/storage"
 	"github.com/anacrolix/torrent/version"
 )
+
+type Observers struct {
+	Trackers webtorrent.TrackerObserver
+	// TODO: Peers observers?
+	Peers PeerObserver
+}
 
 // Contains config elements that are exclusive to tracker handling. There may be other fields in
 // ClientConfig that are also relevant.
@@ -31,6 +39,7 @@ type ClientTrackerConfig struct {
 	// Takes a tracker's hostname and requests DNS A and AAAA records.
 	// Used in case DNS lookups require a special setup (i.e., dns-over-https)
 	LookupTrackerIp func(*url.URL) ([]net.IP, error)
+	Observers       *Observers
 }
 
 type ClientDhtConfig struct {

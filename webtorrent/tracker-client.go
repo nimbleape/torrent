@@ -19,6 +19,17 @@ import (
 	"github.com/anacrolix/torrent/tracker"
 )
 
+type TrackerStatus struct {
+	Url string
+	Ok  bool
+	Err error
+}
+
+type TrackerObserver struct {
+	ConnStatus     chan TrackerStatus
+	AnnounceStatus chan TrackerStatus
+}
+
 type TrackerClientStats struct {
 	Dials                  int64
 	ConvertedInboundConns  int64
@@ -33,6 +44,7 @@ type TrackerClient struct {
 	OnConn             onDataChannelOpen
 	Logger             log.Logger
 	Dialer             *websocket.Dialer
+	Observers          *TrackerObserver
 
 	mu             sync.Mutex
 	cond           sync.Cond
@@ -98,6 +110,7 @@ func (tc *TrackerClient) doWebsocket() error {
 
 	c, _, err := tc.Dialer.Dial(tc.Url, header)
 	if err != nil {
+		tc.updateTrackerConnStatus(TrackerStatus{tc.Url, false, err})
 		return fmt.Errorf("dialing tracker: %w", err)
 	}
 	defer c.Close()
@@ -124,12 +137,25 @@ func (tc *TrackerClient) doWebsocket() error {
 			}
 		}
 	}()
+	tc.updateTrackerConnStatus(TrackerStatus{tc.Url, true, nil})
 	err = tc.trackerReadLoop(tc.wsConn)
 	close(closeChan)
 	tc.mu.Lock()
 	c.Close()
 	tc.mu.Unlock()
 	return err
+}
+
+func (tc *TrackerClient) updateTrackerConnStatus(status TrackerStatus) {
+	if tc.Observers != nil {
+		tc.Observers.ConnStatus <- status
+	}
+}
+
+func (tc *TrackerClient) updateTrackerAnnounceStatus(status TrackerStatus) {
+	if tc.Observers != nil {
+		tc.Observers.AnnounceStatus <- status
+	}
 }
 
 // Finishes initialization and spawns the run routine, calling onStop when it completes with the
@@ -254,6 +280,11 @@ func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte
 
 func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte, offers []outboundOffer) error {
 	request, err := tc.GetAnnounceRequest(event, infoHash)
+	tc.updateTrackerAnnounceStatus(TrackerStatus{
+		Url: tc.Url,
+		Ok:  err == nil,
+		Err: err,
+	})
 	if err != nil {
 		return fmt.Errorf("getting announce parameters: %w", err)
 	}

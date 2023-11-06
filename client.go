@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/anacrolix/torrent/webtorrent"
+
 	"github.com/anacrolix/chansync"
 	"github.com/anacrolix/chansync/events"
 	"github.com/anacrolix/dht/v2"
@@ -48,7 +50,6 @@ import (
 	"github.com/anacrolix/torrent/storage"
 	"github.com/anacrolix/torrent/tracker"
 	"github.com/anacrolix/torrent/types/infohash"
-	"github.com/anacrolix/torrent/webtorrent"
 )
 
 // Clients contain zero or more Torrents. A Client manages a blocklist, the
@@ -290,7 +291,12 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 		}
 	}
 
+	var obs *webtorrent.TrackerObserver
+	if cl.config.Observers != nil {
+		obs = &cl.config.Observers.Trackers
+	}
 	cl.websocketTrackers = websocketTrackers{
+		obs:    obs,
 		PeerId: cl.peerID,
 		Logger: cl.logger,
 		GetAnnounceRequest: func(event tracker.AnnounceEvent, infoHash [20]byte) (tracker.AnnounceRequest, error) {
@@ -719,6 +725,11 @@ func doProtocolHandshakeOnDialResult(
 	cl := t.cl
 	nc := dr.Conn
 	addrIpPort, _ := tryIpPortFromNetAddr(addr)
+
+	var obs *PeerObserver
+	if t.cl.config.Observers != nil {
+		obs = &t.cl.config.Observers.Peers
+	}
 	c, err = cl.initiateProtocolHandshakes(
 		context.Background(), nc, t, obfuscatedHeader,
 		newConnectionOpts{
@@ -728,6 +739,7 @@ func doProtocolHandshakeOnDialResult(
 			localPublicAddr: cl.publicAddr(addrIpPort.IP),
 			network:         dr.Dialer.DialerNetwork(),
 			connString:      regularNetConnPeerConnConnString(nc),
+			obs:             obs,
 		})
 	if err != nil {
 		nc.Close()
@@ -1083,10 +1095,11 @@ func (cl *Client) runHandshookConn(c *PeerConn, t *Torrent) error {
 
 	// TODO here we could send an update to say the PeerConn state connected is true
 	// perhaps could also use c.pex.IsEnabled() or something similar
-	c.StateUpdate <- PeerConnConnected
+	c.UpdatePeerConnStatus(PeerStatus{c.PeerID, true, nil})
 
 	err := c.mainReadLoop()
 	if err != nil {
+		c.UpdatePeerConnStatus(PeerStatus{c.PeerID, false, err})
 		return fmt.Errorf("main read loop: %w", err)
 	}
 	return nil
@@ -1312,8 +1325,6 @@ func (cl *Client) newTorrentOpt(opts AddTorrentOpts) (t *Torrent) {
 		opts.ChunkSize = defaultChunkSize
 	}
 	t.setChunkSize(opts.ChunkSize)
-	// TODO this function should be defined by the library user and passed here somehow
-	t.onPeerConnUpdate = cl.config.OnPeerConnUpdate
 	return
 }
 
@@ -1575,6 +1586,7 @@ type newConnectionOpts struct {
 	localPublicAddr peerLocalPublicAddr
 	network         string
 	connString      string
+	obs             *PeerObserver
 }
 
 func (cl *Client) newConnection(nc net.Conn, opts newConnectionOpts) (c *PeerConn) {
@@ -1595,6 +1607,7 @@ func (cl *Client) newConnection(nc net.Conn, opts newConnectionOpts) (c *PeerCon
 		},
 		connString: opts.connString,
 		conn:       nc,
+		Observers:  opts.obs,
 	}
 	c.peerRequestDataAllocLimiter.Max = cl.config.MaxAllocPeerRequestDataPerConn
 	c.initRequestState()
