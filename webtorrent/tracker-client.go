@@ -25,9 +25,14 @@ type TrackerStatus struct {
 	Err error
 }
 
+type AnnounceStatus struct {
+	TrackerStatus
+	Event string
+}
+
 type TrackerObserver struct {
 	ConnStatus     chan TrackerStatus
-	AnnounceStatus chan TrackerStatus
+	AnnounceStatus chan AnnounceStatus
 }
 
 type TrackerClientStats struct {
@@ -152,7 +157,7 @@ func (tc *TrackerClient) updateTrackerConnStatus(status TrackerStatus) {
 	}
 }
 
-func (tc *TrackerClient) updateTrackerAnnounceStatus(status TrackerStatus) {
+func (tc *TrackerClient) updateTrackerAnnounceStatus(status AnnounceStatus) {
 	if tc.Observers != nil {
 		tc.Observers.AnnounceStatus <- status
 	}
@@ -280,11 +285,16 @@ func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte
 
 func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte, offers []outboundOffer) error {
 	request, err := tc.GetAnnounceRequest(event, infoHash)
-	tc.updateTrackerAnnounceStatus(TrackerStatus{
-		Url: tc.Url,
-		Ok:  err == nil,
-		Err: err,
-	})
+	if err != nil {
+		tc.updateTrackerAnnounceStatus(AnnounceStatus{
+			TrackerStatus: TrackerStatus{
+				Url: tc.Url,
+				Ok:  false,
+				Err: err,
+			},
+			Event: "",
+		})
+	}
 	if err != nil {
 		return fmt.Errorf("getting announce parameters: %w", err)
 	}
@@ -305,6 +315,15 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 			Offer:   offer.originalOffer,
 		})
 	}
+
+	tc.updateTrackerAnnounceStatus(AnnounceStatus{
+		TrackerStatus: TrackerStatus{
+			Url: tc.Url,
+			Ok:  true,
+			Err: nil,
+		},
+		Event: req.Event,
+	})
 
 	data, err := json.Marshal(req)
 	if err != nil {

@@ -30,7 +30,7 @@ func NewClientObservers() *Observers {
 	return &Observers{
 		Trackers: webtorrent.TrackerObserver{
 			ConnStatus:     make(chan webtorrent.TrackerStatus),
-			AnnounceStatus: make(chan webtorrent.TrackerStatus),
+			AnnounceStatus: make(chan webtorrent.AnnounceStatus),
 		},
 		Peers: PeerObserver{
 			PeerStatus: make(chan PeerStatus),

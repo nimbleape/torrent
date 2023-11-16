@@ -119,10 +119,11 @@ func TestClientAnnounceFailure(t *testing.T) {
 	to, err := cl.AddTorrent(mi)
 	require.NoError(t, err)
 
-	status := readChannelTimeout(t, cfg.Observers.Trackers.AnnounceStatus, 500*time.Millisecond).(webtorrent.TrackerStatus)
+	status := readChannelTimeout(t, cfg.Observers.Trackers.AnnounceStatus, 500*time.Millisecond).(webtorrent.AnnounceStatus)
 	require.Equal(t, trackerUrl, status.Url)
 	require.False(t, status.Ok)
 	require.EqualError(t, status.Err, "test error")
+	require.Empty(t, status.Event)
 
 	to.Drop()
 }
@@ -149,10 +150,11 @@ func TestClientAnnounceSuccess(t *testing.T) {
 	to, err := cl.AddTorrent(mi)
 	require.NoError(t, err)
 
-	status := readChannelTimeout(t, cfg.Observers.Trackers.AnnounceStatus, 500*time.Millisecond).(webtorrent.TrackerStatus)
+	status := readChannelTimeout(t, cfg.Observers.Trackers.AnnounceStatus, 500*time.Millisecond).(webtorrent.AnnounceStatus)
 	require.Equal(t, trackerUrl, status.Url)
 	require.True(t, status.Ok)
 	require.Nil(t, status.Err)
+	require.Equal(t, "started", status.Event)
 
 	to.Drop()
 }
