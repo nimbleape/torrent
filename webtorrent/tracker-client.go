@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"github.com/anacrolix/torrent/types/infohash"
 	"net/http"
 	"sync"
 	"time"
@@ -27,7 +28,8 @@ type TrackerStatus struct {
 
 type AnnounceStatus struct {
 	TrackerStatus
-	Event string
+	Event    string
+	InfoHash string
 }
 
 type TrackerObserver struct {
@@ -292,7 +294,8 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 				Ok:  false,
 				Err: err,
 			},
-			Event: "",
+			Event:    "",
+			InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
 		})
 	}
 	if err != nil {
@@ -316,14 +319,15 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 		})
 	}
 
-	tc.updateTrackerAnnounceStatus(AnnounceStatus{
+	announceStatus := AnnounceStatus{
 		TrackerStatus: TrackerStatus{
 			Url: tc.Url,
 			Ok:  true,
 			Err: nil,
 		},
-		Event: req.Event,
-	})
+		Event:    req.Event,
+		InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
+	}
 
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -334,8 +338,12 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 	defer tc.mu.Unlock()
 	err = tc.writeMessage(data)
 	if err != nil {
+		announceStatus.Ok = false
+		announceStatus.Err = err
+		tc.updateTrackerAnnounceStatus(announceStatus)
 		return fmt.Errorf("write AnnounceRequest: %w", err)
 	}
+	tc.updateTrackerAnnounceStatus(announceStatus)
 	for _, offer := range offers {
 		g.MakeMapIfNilAndSet(&tc.outboundOffers, offer.offerId, offer.outboundOfferValue)
 	}
