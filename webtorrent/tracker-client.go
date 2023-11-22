@@ -21,15 +21,15 @@ import (
 )
 
 type TrackerStatus struct {
-	Url string
-	Ok  bool
-	Err error
+	Url string `json:"url"`
+	Ok  bool   `json:"ok"`
+	Err error  `json:"err"`
 }
 
 type AnnounceStatus struct {
 	TrackerStatus
-	Event    string
-	InfoHash string
+	Event    string `json:"event"`
+	InfoHash string `json:"info_hash"`
 }
 
 type TrackerObserver struct {
@@ -332,7 +332,7 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 			Err: nil,
 		},
 		Event:    req.Event,
-		InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
+		InfoHash: binaryToJsonString(infoHash[:]),
 	}
 
 	data, err := json.Marshal(req)
