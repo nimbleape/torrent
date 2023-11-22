@@ -1144,6 +1144,9 @@ func (c *PeerConn) useful() bool {
 
 func (c *PeerConn) UpdatePeerConnStatus(status PeerStatus) {
 	if c.Observers != nil {
-		c.Observers.PeerStatus <- status
+		select {
+		case c.Observers.PeerStatus <- status:
+		default:
+		}
 	}
 }

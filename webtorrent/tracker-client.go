@@ -155,13 +155,19 @@ func (tc *TrackerClient) doWebsocket() error {
 
 func (tc *TrackerClient) updateTrackerConnStatus(status TrackerStatus) {
 	if tc.Observers != nil {
-		tc.Observers.ConnStatus <- status
+		select {
+		case tc.Observers.ConnStatus <- status:
+		default:
+		}
 	}
 }
 
 func (tc *TrackerClient) updateTrackerAnnounceStatus(status AnnounceStatus) {
 	if tc.Observers != nil {
-		tc.Observers.AnnounceStatus <- status
+		select {
+		case tc.Observers.AnnounceStatus <- status:
+		default:
+		}
 	}
 }
 
