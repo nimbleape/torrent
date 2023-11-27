@@ -303,8 +303,6 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 			Event:    "",
 			InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
 		})
-	}
-	if err != nil {
 		return fmt.Errorf("getting announce parameters: %w", err)
 	}
 
@@ -332,11 +330,14 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 			Err: nil,
 		},
 		Event:    req.Event,
-		InfoHash: binaryToJsonString(infoHash[:]),
+		InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
 	}
 
 	data, err := json.Marshal(req)
 	if err != nil {
+		announceStatus.Ok = false
+		announceStatus.Err = err
+		tc.updateTrackerAnnounceStatus(announceStatus)
 		return fmt.Errorf("marshalling request: %w", err)
 	}
 
