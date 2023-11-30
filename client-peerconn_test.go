@@ -67,13 +67,18 @@ func TestPeerConnObserverReadStatusErr(t *testing.T) {
 func TestPeerConnEstablished(t *testing.T) {
 	obs := NewClientObservers()
 	ps := testClientTransferParams{
+		ConfigureSeeder: ConfigureClient{
+			Config: func(cfg *ClientConfig) {
+				cfg.PeerID = "12345123451234512345"
+			},
+		},
 		ConfigureLeecher: ConfigureClient{
 			Config: func(cfg *ClientConfig) {
 				// TODO one of UTP or TCP is needed for the transfer
 				// Does this mean we're not doing webtorrent? TBC
 				// cfg.DisableUTP = true
 				cfg.DisableTCP = true
-				cfg.Debug = true
+				cfg.Debug = false
 				cfg.DisableTrackers = true
 				cfg.EstablishedConnsPerTorrent = 1
 				cfg.Observers = obs
@@ -84,13 +89,14 @@ func TestPeerConnEstablished(t *testing.T) {
 	go testClientTransfer(t, ps)
 
 	status := readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
-	// TODO a check about PeerID?
+	// FIXME converting [20]byte to string is not enough to pass the test
+	// require.Equal(t, "12345123451234512345", fmt.Sprintf("%+q", status.Id))
 	require.True(t, status.Ok)
 	require.Nil(t, status.Err)
 
 	// Peer conn is dropped after transfer is finished. This is the next update we receive.
 	status = readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
-	// TODO a check about PeerID?
+	// TODO a check on PeerID
 	require.False(t, status.Ok)
 	require.Nil(t, status.Err)
 }
