@@ -73,7 +73,7 @@ func TestPeerConnEstablished(t *testing.T) {
 				// Does this mean we're not doing webtorrent? TBC
 				// cfg.DisableUTP = true
 				cfg.DisableTCP = true
-				cfg.Debug = false
+				cfg.Debug = true
 				cfg.DisableTrackers = true
 				cfg.EstablishedConnsPerTorrent = 1
 				cfg.Observers = obs
@@ -86,6 +86,12 @@ func TestPeerConnEstablished(t *testing.T) {
 	status := readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
 	// TODO a check about PeerID?
 	require.True(t, status.Ok)
+	require.Nil(t, status.Err)
+
+	// Peer conn is dropped after transfer is finished. This is the next update we receive.
+	status = readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
+	// TODO a check about PeerID?
+	require.False(t, status.Ok)
 	require.Nil(t, status.Err)
 }
 

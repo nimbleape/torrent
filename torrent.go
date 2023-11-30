@@ -1597,6 +1597,7 @@ func (t *Torrent) dropConnection(c *PeerConn) {
 	c.close()
 
 	c.UpdatePeerConnStatus(PeerStatus{c.PeerID, false, nil})
+	t.logger.WithDefaultLevel(log.Debug).Printf("dropping connection to %+q, sent peerconn update", c.PeerID)
 
 	if t.deletePeerConn(c) {
 		t.openNewConns()
