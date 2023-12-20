@@ -210,9 +210,6 @@ type ClientConfig struct {
 	DialRateLimiter *rate.Limiter
 
 	PieceHashersPerTorrent int // default: 2
-
-	// TODO something like this
-	OnPeerConnUpdate func()
 }
 
 func (cfg *ClientConfig) SetListenAddr(addr string) *ClientConfig {
