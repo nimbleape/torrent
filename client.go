@@ -1095,11 +1095,19 @@ func (cl *Client) runHandshookConn(c *PeerConn, t *Torrent) error {
 
 	// TODO here we could send an update to say the PeerConn state connected is true
 	// perhaps could also use c.pex.IsEnabled() or something similar
-	c.UpdatePeerConnStatus(PeerStatus{c.PeerID, true, nil})
+	c.UpdatePeerConnStatus(PeerStatus{
+		Id: c.PeerID,
+		Ok: true,
+	})
 
 	err := c.mainReadLoop()
 	if err != nil {
-		c.UpdatePeerConnStatus(PeerStatus{c.PeerID, false, err})
+		// c.UpdatePeerConnStatus(PeerStatus{c.PeerID, false, err})
+		c.UpdatePeerConnStatus(PeerStatus{
+			Id:  c.PeerID,
+			Ok:  false,
+			Err: fmt.Sprintf("%s", err),
+		})
 		return fmt.Errorf("main read loop: %w", err)
 	}
 	return nil

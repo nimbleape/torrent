@@ -35,7 +35,7 @@ import (
 type PeerStatus struct {
 	Id  PeerID
 	Ok  bool
-	Err error
+	Err string // see https://github.com/golang/go/issues/5161
 }
 
 type PeerObserver struct {

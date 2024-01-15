@@ -1,7 +1,6 @@
 package torrent
 
 import (
-	"errors"
 	"io"
 	"os"
 	"testing"
@@ -37,7 +36,7 @@ func TestPeerConnObserverReadStatusOk(t *testing.T) {
 
 	status := readChannelTimeout(t, cfg.Observers.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
 	require.True(t, status.Ok)
-	require.Nil(t, status.Err)
+	require.Equal(t, "", status.Err)
 }
 
 func TestPeerConnObserverReadStatusErr(t *testing.T) {
@@ -55,13 +54,13 @@ func TestPeerConnObserverReadStatusErr(t *testing.T) {
 
 	go func() {
 		cfg.Observers.Peers.PeerStatus <- PeerStatus{
-			Err: errors.New("test error"),
+			Err: "test error",
 		}
 	}()
 
 	status := readChannelTimeout(t, cfg.Observers.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
 	require.False(t, status.Ok)
-	require.EqualError(t, status.Err, "test error")
+	require.Equal(t, status.Err, "test error")
 }
 
 func TestPeerConnEstablished(t *testing.T) {
@@ -92,13 +91,13 @@ func TestPeerConnEstablished(t *testing.T) {
 	// FIXME converting [20]byte to string is not enough to pass the test
 	// require.Equal(t, "12345123451234512345", fmt.Sprintf("%+q", status.Id))
 	require.True(t, status.Ok)
-	require.Nil(t, status.Err)
+	require.Equal(t, "", status.Err)
 
 	// Peer conn is dropped after transfer is finished. This is the next update we receive.
 	status = readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
 	// TODO a check on PeerID
 	require.False(t, status.Ok)
-	require.Nil(t, status.Err)
+	require.Equal(t, "", status.Err)
 }
 
 type ConfigureClient struct {
