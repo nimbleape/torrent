@@ -7,8 +7,10 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/anacrolix/missinggo/v2"
 	"github.com/anacrolix/missinggo/v2/bitmap"
 	"github.com/anacrolix/torrent/internal/testutil"
+	"github.com/anacrolix/torrent/types"
 	"github.com/frankban/quicktest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,14 +90,15 @@ func TestPeerConnEstablished(t *testing.T) {
 	go testClientTransfer(t, ps)
 
 	status := readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
-	// FIXME converting [20]byte to string is not enough to pass the test
-	// require.Equal(t, "12345123451234512345", fmt.Sprintf("%+q", status.Id))
+	var expectedPeerId types.PeerID
+	missinggo.CopyExact(&expectedPeerId, "12345123451234512345")
+	require.Equal(t, expectedPeerId, status.Id)
 	require.True(t, status.Ok)
 	require.Equal(t, "", status.Err)
 
 	// Peer conn is dropped after transfer is finished. This is the next update we receive.
 	status = readChannelTimeout(t, obs.Peers.PeerStatus, 500*time.Millisecond).(PeerStatus)
-	// TODO a check on PeerID
+	require.Equal(t, expectedPeerId, status.Id)
 	require.False(t, status.Ok)
 	require.Equal(t, "", status.Err)
 }

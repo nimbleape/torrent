@@ -1093,8 +1093,6 @@ func (cl *Client) runHandshookConn(c *PeerConn, t *Torrent) error {
 	cl.sendInitialMessages(c, t)
 	c.initUpdateRequestsTimer()
 
-	// TODO here we could send an update to say the PeerConn state connected is true
-	// perhaps could also use c.pex.IsEnabled() or something similar
 	c.UpdatePeerConnStatus(PeerStatus{
 		Id: c.PeerID,
 		Ok: true,
@@ -1102,7 +1100,6 @@ func (cl *Client) runHandshookConn(c *PeerConn, t *Torrent) error {
 
 	err := c.mainReadLoop()
 	if err != nil {
-		// c.UpdatePeerConnStatus(PeerStatus{c.PeerID, false, err})
 		c.UpdatePeerConnStatus(PeerStatus{
 			Id:  c.PeerID,
 			Ok:  false,
