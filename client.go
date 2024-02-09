@@ -1801,6 +1801,10 @@ func (cl *Client) String() string {
 	return fmt.Sprintf("<%[1]T %[1]p>", cl)
 }
 
+func (cl *Client) ICEServers() []string {
+	return cl.config.ICEServers
+}
+
 // Returns connection-level aggregate connStats at the Client level. See the comment on
 // TorrentStats.ConnStats.
 func (cl *Client) ConnStats() ConnStats {
