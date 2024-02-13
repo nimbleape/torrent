@@ -13,7 +13,7 @@ require (
 	github.com/anacrolix/fuse v0.2.0
 	github.com/anacrolix/generics v0.0.0-20230816105729-c755655aee45
 	github.com/anacrolix/go-libutp v1.3.1
-	github.com/anacrolix/log v0.14.3-0.20230823030427-4b296d71a6b4
+	github.com/anacrolix/log v0.14.6-0.20231202035202-ed7a02cad0b4
 	github.com/anacrolix/missinggo v1.3.0
 	github.com/anacrolix/missinggo/perf v1.0.0
 	github.com/anacrolix/missinggo/v2 v2.7.2-0.20230527121029-a582b4f397b9
@@ -49,7 +49,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.8.0
 	go.opentelemetry.io/otel/trace v1.8.0
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df
-	golang.org/x/sys v0.11.0
+	golang.org/x/sys v0.15.0
 	golang.org/x/time v0.0.0-20220609170525-579cf78fd858
 )
 
@@ -101,10 +101,10 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/internal/retry v1.8.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.8.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.18.0 // indirect
-	golang.org/x/crypto v0.5.0 // indirect
-	golang.org/x/net v0.7.0 // indirect
+	golang.org/x/crypto v0.17.0 // indirect
+	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	google.golang.org/genproto v0.0.0-20211118181313-81c1377c94b1 // indirect
 	google.golang.org/grpc v1.46.2 // indirect
@@ -122,4 +122,6 @@ retract (
 	v1.39.0
 	// peer-requesting doesn't scale
 	[v1.34.0, v1.38.1]
+	// Indefinite outgoing requests on storage write errors. https://github.com/anacrolix/torrent/issues/889
+	[v1.29.0, v1.53.2]
 )

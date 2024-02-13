@@ -9,6 +9,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/RoaringBitmap/roaring"
 	"github.com/anacrolix/generics/heap"
 	"github.com/anacrolix/log"
 	"github.com/anacrolix/multiless"
@@ -173,6 +174,9 @@ func (p *Peer) getDesiredRequestState() (desired desiredRequestState) {
 	if t.closed.IsSet() {
 		return
 	}
+	if t.dataDownloadDisallowed.Bool() {
+		return
+	}
 	input := t.getRequestStrategyInput()
 	requestHeap := desiredPeerRequests{
 		peer:           p,
@@ -208,7 +212,8 @@ func (p *Peer) getDesiredRequestState() (desired desiredRequestState) {
 						return
 					}
 				}
-				if p.requestState.Cancelled.Contains(r) {
+				cancelled := &p.requestState.Cancelled
+				if !cancelled.IsEmpty() && cancelled.Contains(r) {
 					// Can't re-request while awaiting acknowledgement.
 					return
 				}
@@ -240,32 +245,69 @@ func (p *Peer) maybeUpdateActualRequestState() {
 		func(_ context.Context) {
 			next := p.getDesiredRequestState()
 			p.applyRequestState(next)
-			p.t.requestIndexes = next.Requests.requestIndexes[:0]
+			p.t.cacheNextRequestIndexesForReuse(next.Requests.requestIndexes)
 		},
 	)
+}
+
+func (t *Torrent) cacheNextRequestIndexesForReuse(slice []RequestIndex) {
+	// The incoming slice can be smaller when getDesiredRequestState short circuits on some
+	// conditions.
+	if cap(slice) > cap(t.requestIndexes) {
+		t.requestIndexes = slice[:0]
+	}
+}
+
+// Whether we should allow sending not interested ("losing interest") to the peer. I noticed
+// qBitTorrent seems to punish us for sending not interested when we're streaming and don't
+// currently need anything.
+func (p *Peer) allowSendNotInterested() bool {
+	// Except for caching, we're not likely to lose pieces very soon.
+	if p.t.haveAllPieces() {
+		return true
+	}
+	all, known := p.peerHasAllPieces()
+	if all || !known {
+		return false
+	}
+	// Allow losing interest if we have all the pieces the peer has.
+	return roaring.AndNot(p.peerPieces(), &p.t._completedPieces).IsEmpty()
 }
 
 // Transmit/action the request state to the peer.
 func (p *Peer) applyRequestState(next desiredRequestState) {
 	current := &p.requestState
+	// Make interest sticky
+	if !next.Interested && p.requestState.Interested {
+		if !p.allowSendNotInterested() {
+			next.Interested = true
+		}
+	}
 	if !p.setInterested(next.Interested) {
 		return
 	}
 	more := true
-	requestHeap := heap.InterfaceForSlice(&next.Requests.requestIndexes, next.Requests.lessByValue)
+	orig := next.Requests.requestIndexes
+	requestHeap := heap.InterfaceForSlice(
+		&next.Requests.requestIndexes,
+		next.Requests.lessByValue,
+	)
 	heap.Init(requestHeap)
 
 	t := p.t
 	originalRequestCount := current.Requests.GetCardinality()
-	// We're either here on a timer, or because we ran out of requests. Both are valid reasons to
-	// alter peakRequests.
-	if originalRequestCount != 0 && p.needRequestUpdate != peerUpdateRequestsTimerReason {
-		panic(fmt.Sprintf(
-			"expected zero existing requests (%v) for update reason %q",
-			originalRequestCount, p.needRequestUpdate))
-	}
-	for requestHeap.Len() != 0 && maxRequests(current.Requests.GetCardinality()+current.Cancelled.GetCardinality()) < p.nominalMaxRequests() {
+	for {
+		if requestHeap.Len() == 0 {
+			break
+		}
+		numPending := maxRequests(current.Requests.GetCardinality() + current.Cancelled.GetCardinality())
+		if numPending >= p.nominalMaxRequests() {
+			break
+		}
 		req := heap.Pop(requestHeap)
+		if cap(next.Requests.requestIndexes) != cap(orig) {
+			panic("changed")
+		}
 		existing := t.requestingPeer(req)
 		if existing != nil && existing != p {
 			// Don't steal from the poor.
