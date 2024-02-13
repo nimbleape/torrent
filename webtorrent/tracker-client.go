@@ -5,10 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/anacrolix/torrent/types/infohash"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/anacrolix/torrent/types/infohash"
 
 	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/log"
@@ -62,7 +63,7 @@ type TrackerClient struct {
 	pingTicker     *time.Ticker
 
 	WebsocketTrackerHttpHeader func() http.Header
-	ICEServers                 []string
+	ICEServers                 []webrtc.ICEServer
 }
 
 func (me *TrackerClient) Stats() TrackerClientStats {

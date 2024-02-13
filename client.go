@@ -37,6 +37,7 @@ import (
 	"github.com/dustin/go-humanize"
 	gbtree "github.com/google/btree"
 	"github.com/pion/datachannel"
+	"github.com/pion/webrtc/v3"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/internal/check"
@@ -1804,7 +1805,7 @@ func (cl *Client) String() string {
 	return fmt.Sprintf("<%[1]T %[1]p>", cl)
 }
 
-func (cl *Client) ICEServers() []string {
+func (cl *Client) ICEServers() []webrtc.ICEServer {
 	return cl.config.ICEServers
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent/webtorrent"
+	"github.com/pion/webrtc/v3"
 
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
@@ -205,7 +206,7 @@ type ClientConfig struct {
 
 	// ICEServers defines a slice describing servers available to be used by
 	// ICE, such as STUN and TURN servers.
-	ICEServers []string
+	ICEServers []webrtc.ICEServer
 
 	DialRateLimiter *rate.Limiter
 
