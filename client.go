@@ -1093,6 +1093,12 @@ func (t *Torrent) runHandshookConn(pc *PeerConn) error {
 	pc.startMessageWriter()
 	pc.sendInitialMessages()
 	pc.initUpdateRequestsTimer()
+
+	pc.UpdatePeerConnStatus(PeerStatus{
+		Id: pc.PeerID,
+		Ok: true,
+	})
+
 	err := pc.mainReadLoop()
 	if err != nil {
 		pc.UpdatePeerConnStatus(PeerStatus{
