@@ -3,6 +3,7 @@ package storage
 import (
 	"testing"
 
+	g "github.com/anacrolix/generics"
 	"github.com/stretchr/testify/require"
 
 	"github.com/anacrolix/torrent/metainfo"
@@ -19,7 +20,7 @@ func testMarkedCompleteMissingOnRead(t *testing.T, csf func(string) ClientImplCl
 	}
 	ts, err := cs.OpenTorrent(info, metainfo.Hash{})
 	require.NoError(t, err)
-	p := ts.Piece(info.Piece(0))
+	p := ts.PieceWithHash(info.Piece(0), g.None[[]byte]())
 	require.NoError(t, p.MarkComplete())
 	// require.False(t, p.GetIsComplete())
 	n, err := p.ReadAt(make([]byte, 1), 0)

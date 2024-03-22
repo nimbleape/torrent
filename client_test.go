@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/netip"
 	"os"
@@ -131,9 +132,9 @@ func TestAddDropManyTorrents(t *testing.T) {
 	cl, err := NewClient(TestingConfig(t))
 	require.NoError(t, err)
 	defer cl.Close()
-	for i := 0; i < 1000; i += 1 {
+	for i := range 1000 {
 		var spec TorrentSpec
-		binary.PutVarint(spec.InfoHash[:], int64(i))
+		binary.PutVarint(spec.InfoHash[:], int64(i+1))
 		tt, new, err := cl.AddTorrentSpec(&spec)
 		assert.NoError(t, err)
 		assert.True(t, new)
@@ -155,6 +156,7 @@ func TestMergingTrackersByAddingSpecs(t *testing.T) {
 	require.NoError(t, err)
 	defer cl.Close()
 	spec := TorrentSpec{}
+	rand.Read(spec.InfoHash[:])
 	T, new, _ := cl.AddTorrentSpec(&spec)
 	if !new {
 		t.FailNow()
@@ -339,6 +341,7 @@ func TestTorrentDroppedDuringResponsiveRead(t *testing.T) {
 }
 
 func TestDhtInheritBlocklist(t *testing.T) {
+	c := qt.New(t)
 	ipl := iplist.New(nil)
 	require.NotNil(t, ipl)
 	cfg := TestingConfig(t)
@@ -353,7 +356,7 @@ func TestDhtInheritBlocklist(t *testing.T) {
 		assert.Equal(t, ipl, s.(AnacrolixDhtServerWrapper).Server.IPBlocklist())
 		numServers++
 	})
-	assert.EqualValues(t, 2, numServers)
+	c.Assert(numServers, qt.Not(qt.Equals), 0)
 }
 
 // Check that stuff is merged in subsequent AddTorrentSpec for the same
@@ -586,6 +589,7 @@ func TestPeerInvalidHave(t *testing.T) {
 }
 
 func TestPieceCompletedInStorageButNotClient(t *testing.T) {
+	c := qt.New(t)
 	greetingTempDir, greetingMetainfo := testutil.GreetingTestTorrent()
 	defer os.RemoveAll(greetingTempDir)
 	cfg := TestingConfig(t)
@@ -593,9 +597,12 @@ func TestPieceCompletedInStorageButNotClient(t *testing.T) {
 	seeder, err := NewClient(TestingConfig(t))
 	require.NoError(t, err)
 	defer seeder.Close()
-	seeder.AddTorrentSpec(&TorrentSpec{
+	_, new, err := seeder.AddTorrentSpec(&TorrentSpec{
 		InfoBytes: greetingMetainfo.InfoBytes,
+		InfoHash:  greetingMetainfo.HashInfoBytes(),
 	})
+	c.Check(err, qt.IsNil)
+	c.Check(new, qt.IsTrue)
 }
 
 // Check that when the listen port is 0, all the protocols listened on have

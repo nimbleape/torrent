@@ -2,6 +2,7 @@ package infohash
 
 import (
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding"
 	"encoding/hex"
 	"fmt"
@@ -51,6 +52,10 @@ func (t *T) FromHexString(s string) (err error) {
 	return
 }
 
+func (t *T) IsZero() bool {
+	return *t == T{}
+}
+
 var (
 	_ encoding.TextUnmarshaler = (*T)(nil)
 	_ encoding.TextMarshaler   = T{}
@@ -74,6 +79,13 @@ func FromHexString(s string) (h T) {
 
 func HashBytes(b []byte) (ret T) {
 	hasher := sha1.New()
+	hasher.Write(b)
+	copy(ret[:], hasher.Sum(nil))
+	return
+}
+
+func HashBytesV2(b []byte) (ret T) {
+	hasher := sha256.New()
 	hasher.Write(b)
 	copy(ret[:], hasher.Sum(nil))
 	return

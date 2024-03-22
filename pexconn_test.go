@@ -7,7 +7,6 @@ import (
 	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/stretchr/testify/require"
 
-	"github.com/anacrolix/torrent/metainfo"
 	pp "github.com/anacrolix/torrent/peer_protocol"
 )
 
@@ -15,14 +14,14 @@ func TestPexConnState(t *testing.T) {
 	var cl Client
 	cl.init(TestingConfig(t))
 	cl.initLogger()
-	torrent := cl.newTorrent(metainfo.Hash{}, nil)
+	torrent := cl.newTorrentForTesting()
 	addr := &net.TCPAddr{IP: net.IPv6loopback, Port: 4747}
 	c := cl.newConnection(nil, newConnectionOpts{
 		remoteAddr: addr,
 		network:    addr.Network(),
 	})
 	c.PeerExtensionIDs = make(map[pp.ExtensionName]pp.ExtensionNumber)
-	c.PeerExtensionIDs[pp.ExtensionNamePex] = pexExtendedId
+	c.PeerExtensionIDs[pp.ExtensionNamePex] = 1
 	c.messageWriter.mu.Lock()
 	c.setTorrent(torrent)
 	if err := torrent.addPeerConn(c); err != nil {
@@ -45,7 +44,8 @@ func TestPexConnState(t *testing.T) {
 	c.pex.Share(testWriter)
 	require.True(t, writerCalled)
 	require.EqualValues(t, pp.Extended, out.Type)
-	require.EqualValues(t, pexExtendedId, out.ExtendedID)
+	require.NotEqualValues(t, out.ExtendedID, 0)
+	require.EqualValues(t, c.PeerExtensionIDs[pp.ExtensionNamePex], out.ExtendedID)
 
 	x, err := pp.LoadPexMsg(out.ExtendedPayload)
 	require.NoError(t, err)

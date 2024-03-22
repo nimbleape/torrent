@@ -89,7 +89,13 @@ func resolveTestPeers(addrs []string) (ret []torrent.PeerInfo) {
 	return
 }
 
-func addTorrents(ctx context.Context, client *torrent.Client, flags downloadFlags, wg *sync.WaitGroup) error {
+func addTorrents(
+	ctx context.Context,
+	client *torrent.Client,
+	flags downloadFlags,
+	wg *sync.WaitGroup,
+	fatalErr func(err error),
+) error {
 	testPeers := resolveTestPeers(flags.TestPeer)
 	for _, arg := range flags.Torrent {
 		t, err := func() (*torrent.Torrent, error) {
@@ -112,7 +118,7 @@ func addTorrents(ctx context.Context, client *torrent.Client, flags downloadFlag
 				}
 				t, err := client.AddTorrent(metaInfo)
 				if err != nil {
-					return nil, fmt.Errorf("adding torrent: %w", err)
+					return nil, err
 				}
 				return t, nil
 			} else if strings.HasPrefix(arg, "infohash:") {
@@ -133,6 +139,10 @@ func addTorrents(ctx context.Context, client *torrent.Client, flags downloadFlag
 		if err != nil {
 			return fmt.Errorf("adding torrent for %q: %w", arg, err)
 		}
+		t.SetOnWriteChunkError(func(err error) {
+			err = fmt.Errorf("error writing chunk for %v: %w", t, err)
+			fatalErr(err)
+		})
 		if flags.Progress {
 			torrentBar(t, flags.PieceStates)
 		}
@@ -161,10 +171,18 @@ func addTorrents(ctx context.Context, client *torrent.Client, flags downloadFlag
 					defer wg.Done()
 					waitForPieces(ctx, t, 0, t.NumPieces())
 				}()
-				if flags.LinearDiscard {
-					r := t.NewReader()
-					io.Copy(io.Discard, r)
-					r.Close()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					if flags.LinearDiscard {
+						r := t.NewReader()
+						io.Copy(io.Discard, r)
+						r.Close()
+					}
+				}()
+				select {
+				case <-done:
+				case <-ctx.Done():
 				}
 			} else {
 				for _, f := range t.Files() {
@@ -344,17 +362,33 @@ func downloadErr(flags downloadFlags) error {
 		client.WriteStatus(w)
 	})
 	var wg sync.WaitGroup
-	err = addTorrents(ctx, client, flags, &wg)
+	fatalErr := make(chan error, 1)
+	err = addTorrents(ctx, client, flags, &wg,
+		func(err error) {
+			select {
+			case fatalErr <- err:
+			default:
+				panic(err)
+			}
+		})
 	if err != nil {
 		return fmt.Errorf("adding torrents: %w", err)
 	}
 	started := time.Now()
 	defer outputStats(client, flags)
-	wg.Wait()
-	if ctx.Err() == nil {
-		log.Print("downloaded ALL the torrents")
-	} else {
-		err = ctx.Err()
+	wgWaited := make(chan struct{})
+	go func() {
+		defer close(wgWaited)
+		wg.Wait()
+	}()
+	select {
+	case <-wgWaited:
+		if ctx.Err() == nil {
+			log.Print("downloaded ALL the torrents")
+		} else {
+			err = ctx.Err()
+		}
+	case err = <-fatalErr:
 	}
 	clientConnStats := client.ConnStats()
 	log.Printf(

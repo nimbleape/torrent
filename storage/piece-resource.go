@@ -2,14 +2,16 @@ package storage
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"path"
 	"sort"
 	"strconv"
-	"sync"
 
+	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/missinggo/v2/resource"
+	"github.com/anacrolix/sync"
 
 	"github.com/anacrolix/torrent/metainfo"
 )
@@ -53,12 +55,13 @@ func (s piecePerResource) OpenTorrent(info *metainfo.Info, infoHash metainfo.Has
 		s,
 		make([]sync.RWMutex, info.NumPieces()),
 	}
-	return TorrentImpl{Piece: t.Piece, Close: t.Close}, nil
+	return TorrentImpl{PieceWithHash: t.Piece, Close: t.Close}, nil
 }
 
-func (s piecePerResourceTorrentImpl) Piece(p metainfo.Piece) PieceImpl {
+func (s piecePerResourceTorrentImpl) Piece(p metainfo.Piece, pieceHash g.Option[[]byte]) PieceImpl {
 	return piecePerResourcePiece{
 		mp:               p,
+		pieceHash:        pieceHash,
 		piecePerResource: s.piecePerResource,
 		mu:               &s.locks[p.Index()],
 	}
@@ -72,8 +75,14 @@ type ConsecutiveChunkReader interface {
 	ReadConsecutiveChunks(prefix string) (io.ReadCloser, error)
 }
 
+type PrefixDeleter interface {
+	DeletePrefix(prefix string) error
+}
+
 type piecePerResourcePiece struct {
 	mp metainfo.Piece
+	// The piece hash if we have it. It could be 20 or 32 bytes depending on the info version.
+	pieceHash g.Option[[]byte]
 	piecePerResource
 	// This protects operations that move complete/incomplete pieces around, which can trigger read
 	// errors that may cause callers to do more drastic things.
@@ -118,7 +127,10 @@ func (s piecePerResourcePiece) mustIsComplete() bool {
 	return completion.Complete
 }
 
-func (s piecePerResourcePiece) Completion() Completion {
+func (s piecePerResourcePiece) Completion() (_ Completion) {
+	if !s.pieceHash.Ok {
+		return
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	fi, err := s.completed().Stat()
@@ -132,7 +144,7 @@ type SizedPutter interface {
 	PutSized(io.Reader, int64) error
 }
 
-func (s piecePerResourcePiece) MarkComplete() error {
+func (s piecePerResourcePiece) MarkComplete() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	incompleteChunks := s.getChunks()
@@ -154,11 +166,20 @@ func (s piecePerResourcePiece) MarkComplete() error {
 			return completedInstance.Put(r)
 		}
 	}()
-	if err == nil && !s.opts.LeaveIncompleteChunks {
-		// I think we do this synchronously here since we don't want callers to act on the completed
-		// piece if we're concurrently still deleting chunks. The caller may decide to start
-		// downloading chunks again and won't expect us to delete them. It seems to be much faster
-		// to let the resource provider do this if possible.
+	if err != nil || s.opts.LeaveIncompleteChunks {
+		return
+	}
+
+	// I think we do this synchronously here since we don't want callers to act on the completed
+	// piece if we're concurrently still deleting chunks. The caller may decide to start
+	// downloading chunks again and won't expect us to delete them. It seems to be much faster
+	// to let the resource provider do this if possible.
+	if pd, ok := s.rp.(PrefixDeleter); ok {
+		err = pd.DeletePrefix(s.incompleteDirPath() + "/")
+		if err != nil {
+			err = fmt.Errorf("deleting incomplete prefix: %w", err)
+		}
+	} else {
 		var wg sync.WaitGroup
 		for _, c := range incompleteChunks {
 			wg.Add(1)
@@ -255,7 +276,7 @@ func (s piecePerResourcePiece) getChunks() (chunks chunks) {
 }
 
 func (s piecePerResourcePiece) completedInstancePath() string {
-	return path.Join("completed", s.mp.Hash().HexString())
+	return path.Join("completed", s.hashHex())
 }
 
 func (s piecePerResourcePiece) completed() resource.Instance {
@@ -267,7 +288,7 @@ func (s piecePerResourcePiece) completed() resource.Instance {
 }
 
 func (s piecePerResourcePiece) incompleteDirPath() string {
-	return path.Join("incompleted", s.mp.Hash().HexString())
+	return path.Join("incompleted", s.hashHex())
 }
 
 func (s piecePerResourcePiece) incompleteDir() resource.DirInstance {
@@ -276,4 +297,8 @@ func (s piecePerResourcePiece) incompleteDir() resource.DirInstance {
 		panic(err)
 	}
 	return i.(resource.DirInstance)
+}
+
+func (me piecePerResourcePiece) hashHex() string {
+	return hex.EncodeToString(me.pieceHash.Unwrap())
 }

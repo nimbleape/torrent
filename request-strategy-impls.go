@@ -51,7 +51,7 @@ func (cl *Client) getRequestStrategyInputCommon() requestStrategyInputCommon {
 
 // Returns what is necessary to run request_strategy.GetRequestablePieces for primaryTorrent.
 func (cl *Client) getRequestStrategyInput(primaryTorrent *Torrent) (input request_strategy.Input) {
-	if primaryTorrent.storage.Capacity == nil {
+	if !primaryTorrent.hasStorageCap() {
 		return requestStrategyInputSingleTorrent{
 			requestStrategyInputCommon: cl.getRequestStrategyInputCommon(),
 			t:                          primaryTorrent,
@@ -59,8 +59,9 @@ func (cl *Client) getRequestStrategyInput(primaryTorrent *Torrent) (input reques
 	} else {
 		return requestStrategyInputMultiTorrent{
 			requestStrategyInputCommon: cl.getRequestStrategyInputCommon(),
-			torrents:                   cl.torrents,
-			capFunc:                    primaryTorrent.storage.Capacity,
+			// TODO: Check this is an appropriate key
+			torrents: cl.torrentsByShortHash,
+			capFunc:  primaryTorrent.storage.Capacity,
 		}
 	}
 }
@@ -74,7 +75,7 @@ type requestStrategyTorrent struct {
 }
 
 func (r requestStrategyTorrent) Piece(i int) request_strategy.Piece {
-	return (*requestStrategyPiece)(r.t.piece(i))
+	return requestStrategyPiece{r.t.piece(i)}
 }
 
 func (r requestStrategyTorrent) PieceLength() int64 {
@@ -83,14 +84,16 @@ func (r requestStrategyTorrent) PieceLength() int64 {
 
 var _ request_strategy.Torrent = requestStrategyTorrent{}
 
-type requestStrategyPiece Piece
-
-func (r *requestStrategyPiece) Request() bool {
-	return !r.t.ignorePieceForRequests(r.index)
+type requestStrategyPiece struct {
+	p *Piece
 }
 
-func (r *requestStrategyPiece) NumPendingChunks() int {
-	return int(r.t.pieceNumPendingChunks(r.index))
+func (r requestStrategyPiece) Request() bool {
+	return !r.p.ignoreForRequests() && r.p.purePriority() != PiecePriorityNone
+}
+
+func (r requestStrategyPiece) NumPendingChunks() int {
+	return int(r.p.t.pieceNumPendingChunks(r.p.index))
 }
 
 var _ request_strategy.Piece = (*requestStrategyPiece)(nil)

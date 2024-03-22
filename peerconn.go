@@ -26,6 +26,7 @@ import (
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/internal/alloclim"
+	"github.com/anacrolix/torrent/merkle"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/mse"
 	pp "github.com/anacrolix/torrent/peer_protocol"
@@ -46,6 +47,12 @@ type PeerObserver struct {
 type PeerConn struct {
 	Peer
 
+	// Move to PeerConn?
+	protocolLogger log.Logger
+
+	// BEP 52
+	v2 bool
+
 	// A string that should identify the PeerConn's net.Conn endpoints. The net.Conn could
 	// be wrapping WebRTC, uTP, or TCP etc. Used in writing the conn status for peers.
 	connString string
@@ -54,6 +61,12 @@ type PeerConn struct {
 	PeerID             PeerID
 	PeerExtensionBytes pp.PeerExtensionBits
 	PeerListenPort     int
+
+	// The local extended protocols to advertise in the extended handshake, and to support receiving
+	// from the peer. This will point to the Client default when the PeerConnAdded callback is
+	// invoked. Do not modify this, point it to your own instance. Do not modify the destination
+	// after returning from the callback.
+	LocalLtepProtocolMap *LocalLtepProtocolMap
 
 	// The actual Conn, used for closing, and setting socket options. Do not use methods on this
 	// while holding any mutexes.
@@ -65,6 +78,7 @@ type PeerConn struct {
 
 	messageWriter peerConnMsgWriter
 
+	// The peer's extension map, as sent in their extended handshake.
 	PeerExtensionIDs map[pp.ExtensionName]pp.ExtensionNumber
 	PeerClientName   atomic.Value
 	uploadTimer      *time.Timer
@@ -81,6 +95,13 @@ type PeerConn struct {
 	outstandingHolepunchingRendezvous map[netip.AddrPort]struct{}
 
 	Observers *PeerObserver
+	// Hash requests sent to the peer. If there's an issue we probably don't want to reissue these,
+	// because I haven't implemented it smart enough yet.
+	sentHashRequests map[hashRequest]struct{}
+	// Hash pieces received from the peer, mapped from pieces root to piece layer hashes. This way
+	// we can verify all the pieces for a file when they're all arrived before submitting them to
+	// the torrent.
+	receivedHashPieces map[[32]byte][][32]byte
 }
 
 func (cn *PeerConn) pexStatus() string {
@@ -176,20 +197,30 @@ func (cn *PeerConn) peerPieces() *roaring.Bitmap {
 	return &cn._peerPieces
 }
 
-func (cn *PeerConn) connectionFlags() (ret string) {
-	c := func(b byte) {
-		ret += string([]byte{b})
+func (cn *PeerConn) connectionFlags() string {
+	var sb strings.Builder
+	add := func(s string) {
+		if sb.Len() > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(s)
+	}
+	// From first relevant to last.
+	add(string(cn.Discovery))
+	if cn.utp() {
+		add("U")
 	}
 	if cn.cryptoMethod == mse.CryptoMethodRC4 {
-		c('E')
+		add("E")
 	} else if cn.headerEncrypted {
-		c('e')
+		add("e")
 	}
-	ret += string(cn.Discovery)
-	if cn.utp() {
-		c('U')
+	if cn.v2 {
+		add("v2")
+	} else {
+		add("v1")
 	}
-	return
+	return sb.String()
 }
 
 func (cn *PeerConn) utp() bool {
@@ -231,7 +262,7 @@ func (cn *PeerConn) requestMetadataPiece(index int) {
 	if index < len(cn.metadataRequests) && cn.metadataRequests[index] {
 		return
 	}
-	cn.logger.WithDefaultLevel(log.Debug).Printf("requesting metadata piece %d", index)
+	cn.protocolLogger.WithDefaultLevel(log.Debug).Printf("requesting metadata piece %d", index)
 	cn.write(pp.MetadataExtensionRequestMsg(eID, index))
 	for index >= len(cn.metadataRequests) {
 		cn.metadataRequests = append(cn.metadataRequests, false)
@@ -338,6 +369,7 @@ func (cn *PeerConn) fillWriteBuffer() {
 		// knowledge of write buffers.
 		return
 	}
+	cn.requestMissingHashes()
 	cn.maybeUpdateActualRequestState()
 	if cn.pex.IsEnabled() {
 		if flow := cn.pex.Share(cn.write); !flow {
@@ -590,7 +622,7 @@ func (c *PeerConn) onReadRequest(r Request, startFetch bool) error {
 	}
 	if opt := c.maximumPeerRequestChunkLength(); opt.Ok && int(r.Length) > opt.Value {
 		err := fmt.Errorf("peer requested chunk too long (%v)", r.Length)
-		c.logger.Levelf(log.Warning, err.Error())
+		c.protocolLogger.Levelf(log.Warning, err.Error())
 		if c.fastEnabled() {
 			c.reject(r)
 			return nil
@@ -683,7 +715,7 @@ func (c *PeerConn) peerRequestDataReadFailed(err error, r Request) {
 			// If fast isn't enabled, I think we would have wiped all peer requests when we last
 			// choked, and requests while we're choking would be ignored. It could be possible that
 			// a peer request data read completed concurrently to it being deleted elsewhere.
-			c.logger.WithDefaultLevel(log.Warning).Printf("already choking peer, requests might not be rejected correctly")
+			c.protocolLogger.WithDefaultLevel(log.Warning).Printf("already choking peer, requests might not be rejected correctly")
 		}
 		// Choking a non-fast peer should cause them to flush all their requests.
 		c.choke(c.write)
@@ -707,7 +739,7 @@ func (c *PeerConn) readPeerRequestData(r Request) ([]byte, error) {
 }
 
 func (c *PeerConn) logProtocolBehaviour(level log.Level, format string, arg ...interface{}) {
-	c.logger.WithContextText(fmt.Sprintf(
+	c.protocolLogger.WithContextText(fmt.Sprintf(
 		"peer id %q, ext v %q", c.PeerID, c.PeerClientName.Load(),
 	)).SkipCallers(1).Levelf(level, format, arg...)
 }
@@ -736,7 +768,11 @@ func (c *PeerConn) mainReadLoop() (err error) {
 			cl.unlock()
 			defer cl.lock()
 			err = decoder.Decode(&msg)
+			if err != nil {
+				err = fmt.Errorf("decoding message: %w", err)
+			}
 		}()
+		// Do this before checking closed.
 		if cb := c.callbacks.ReadMessage; cb != nil && err == nil {
 			cb(c, &msg)
 		}
@@ -744,6 +780,7 @@ func (c *PeerConn) mainReadLoop() (err error) {
 			return nil
 		}
 		if err != nil {
+			err = log.WithLevel(log.Info, err)
 			return err
 		}
 		c.lastMessageReceived = time.Now()
@@ -791,7 +828,7 @@ func (c *PeerConn) mainReadLoop() (err error) {
 			if preservedCount != 0 {
 				// TODO: Yes this is a debug log but I'm not happy with the state of the logging lib
 				// right now.
-				c.logger.Levelf(log.Debug,
+				c.protocolLogger.Levelf(log.Debug,
 					"%v requests were preserved while being choked (fast=%v)",
 					preservedCount,
 					c.fastEnabled())
@@ -859,7 +896,7 @@ func (c *PeerConn) mainReadLoop() (err error) {
 			req := newRequestFromMessage(&msg)
 			if !c.remoteRejectedRequest(c.t.requestIndexFromRequest(req)) {
 				err = fmt.Errorf("received invalid reject for request %v", req)
-				c.logger.Levelf(log.Debug, "%v", err)
+				c.protocolLogger.Levelf(log.Debug, "%v", err)
 			}
 		case pp.AllowedFast:
 			torrent.Add("allowed fasts received", 1)
@@ -867,6 +904,10 @@ func (c *PeerConn) mainReadLoop() (err error) {
 			c.updateRequests("PeerConn.mainReadLoop allowed fast")
 		case pp.Extended:
 			err = c.onReadExtendedMsg(msg.ExtendedID, msg.ExtendedPayload)
+		case pp.Hashes:
+			err = c.onReadHashes(&msg)
+		case pp.HashRequest, pp.HashReject:
+			c.protocolLogger.Levelf(log.Info, "received unimplemented BitTorrent v2 message: %v", msg.Type)
 		default:
 			err = fmt.Errorf("received unknown message type: %#v", msg.Type)
 		}
@@ -889,17 +930,27 @@ func (c *PeerConn) onReadExtendedMsg(id pp.ExtensionNumber, payload []byte) (err
 	}()
 	t := c.t
 	cl := t.cl
-	switch id {
-	case pp.HandshakeExtendedID:
+	{
+		event := PeerConnReadExtensionMessageEvent{
+			PeerConn:        c,
+			ExtensionNumber: id,
+			Payload:         payload,
+		}
+		for _, cb := range c.callbacks.PeerConnReadExtensionMessage {
+			cb(event)
+		}
+	}
+	if id == pp.HandshakeExtendedID {
 		var d pp.ExtendedHandshakeMessage
 		if err := bencode.Unmarshal(payload, &d); err != nil {
-			c.logger.Printf("error parsing extended handshake message %q: %s", payload, err)
+			c.protocolLogger.Printf("error parsing extended handshake message %q: %s", payload, err)
 			return fmt.Errorf("unmarshalling extended handshake payload: %w", err)
 		}
+		// Trigger this callback after it's been processed. If you want to handle it yourself, you
+		// should hook PeerConnReadExtensionMessage.
 		if cb := c.callbacks.ReadExtendedHandshake; cb != nil {
 			cb(c, &d)
 		}
-		// c.logger.WithDefaultLevel(log.Debug).Printf("received extended handshake message:\n%s", spew.Sdump(d))
 		if d.Reqq != 0 {
 			c.PeerMaxRequests = d.Reqq
 		}
@@ -931,13 +982,23 @@ func (c *PeerConn) onReadExtendedMsg(id pp.ExtensionNumber, payload []byte) (err
 			c.pex.Init(c)
 		}
 		return nil
-	case metadataExtendedId:
+	}
+	extensionName, builtin, err := c.LocalLtepProtocolMap.LookupId(id)
+	if err != nil {
+		return
+	}
+	if !builtin {
+		// User should have taken care of this in PeerConnReadExtensionMessage callback.
+		return nil
+	}
+	switch extensionName {
+	case pp.ExtensionNameMetadata:
 		err := cl.gotMetadataExtensionMsg(payload, t, c)
 		if err != nil {
 			return fmt.Errorf("handling metadata extension message: %w", err)
 		}
 		return nil
-	case pexExtendedId:
+	case pp.ExtensionNamePex:
 		if !c.pex.IsEnabled() {
 			return nil // or hang-up maybe?
 		}
@@ -946,7 +1007,7 @@ func (c *PeerConn) onReadExtendedMsg(id pp.ExtensionNumber, payload []byte) (err
 			err = fmt.Errorf("receiving pex message: %w", err)
 		}
 		return
-	case utHolepunchExtendedId:
+	case utHolepunch.ExtensionName:
 		var msg utHolepunch.Msg
 		err = msg.UnmarshalBinary(payload)
 		if err != nil {
@@ -956,7 +1017,7 @@ func (c *PeerConn) onReadExtendedMsg(id pp.ExtensionNumber, payload []byte) (err
 		err = c.t.handleReceivedUtHolepunchMsg(msg, c)
 		return
 	default:
-		return fmt.Errorf("unexpected extended message ID: %v", id)
+		panic(fmt.Sprintf("unhandled builtin extension protocol %q", extensionName))
 	}
 }
 
@@ -1171,5 +1232,163 @@ func (c *PeerConn) UpdatePeerConnStatus(status PeerStatus) {
 		case c.Observers.PeerStatus <- status:
 		default:
 		}
+	}
+}
+func makeBuiltinLtepProtocols(pex bool) LocalLtepProtocolMap {
+	ps := []pp.ExtensionName{pp.ExtensionNameMetadata, utHolepunch.ExtensionName}
+	if pex {
+		ps = append(ps, pp.ExtensionNamePex)
+	}
+	return LocalLtepProtocolMap{
+		Index:      ps,
+		NumBuiltin: len(ps),
+	}
+}
+
+func (c *PeerConn) addBuiltinLtepProtocols(pex bool) {
+	c.LocalLtepProtocolMap = &c.t.cl.defaultLocalLtepProtocolMap
+}
+
+func (pc *PeerConn) WriteExtendedMessage(extName pp.ExtensionName, payload []byte) error {
+	pc.locker().Lock()
+	defer pc.locker().Unlock()
+	id := pc.PeerExtensionIDs[extName]
+	if id == 0 {
+		return fmt.Errorf("peer does not support or has disabled extension %q", extName)
+	}
+	pc.write(pp.Message{
+		Type:            pp.Extended,
+		ExtendedID:      id,
+		ExtendedPayload: payload,
+	})
+	return nil
+}
+
+func (pc *PeerConn) shouldRequestHashes() bool {
+	return pc.t.haveInfo() && pc.v2 && pc.t.info.HasV2()
+}
+
+func (pc *PeerConn) requestMissingHashes() {
+	if !pc.shouldRequestHashes() {
+		return
+	}
+	info := pc.t.info
+	baseLayer := pp.Integer(merkle.Log2RoundingUp(merkle.RoundUpToPowerOfTwo(
+		uint((pc.t.usualPieceSize() + merkle.BlockSize - 1) / merkle.BlockSize)),
+	))
+	nextFileBeginPiece := 0
+file:
+	for _, file := range info.UpvertedFiles() {
+		fileNumPieces := int((file.Length + info.PieceLength - 1) / info.PieceLength)
+		curFileBeginPiece := nextFileBeginPiece
+		nextFileBeginPiece += fileNumPieces
+		haveAllHashes := true
+		for i := range fileNumPieces {
+			torrentPieceIndex := curFileBeginPiece + i
+			if !pc.peerHasPiece(torrentPieceIndex) {
+				continue file
+			}
+			if !pc.t.piece(torrentPieceIndex).hashV2.Ok {
+				haveAllHashes = false
+			}
+		}
+		if haveAllHashes {
+			continue
+		}
+		// We would be requesting the leaves, the file must be short enough that we can just do with
+		// the pieces root as the piece hash.
+		if fileNumPieces <= 1 {
+			continue
+		}
+		piecesRoot := file.PiecesRoot.Unwrap()
+		proofLayers := pp.Integer(0)
+		for index := 0; index < fileNumPieces; index += 512 {
+			// Minimizing to the number of pieces in a file conflicts with the BEP.
+			length := merkle.RoundUpToPowerOfTwo(uint(min(512, fileNumPieces-index)))
+			if length < 2 {
+				// This should have been filtered out by baseLayer and pieces root as piece hash
+				// checks.
+				panic(length)
+			}
+			if length%2 != 0 {
+				pc.protocolLogger.Levelf(log.Warning, "requesting odd hashes length %d", length)
+			}
+			msg := pp.Message{
+				Type:        pp.HashRequest,
+				PiecesRoot:  piecesRoot,
+				BaseLayer:   baseLayer,
+				Index:       pp.Integer(index),
+				Length:      pp.Integer(length),
+				ProofLayers: proofLayers,
+			}
+			hr := hashRequestFromMessage(msg)
+			if generics.MapContains(pc.sentHashRequests, hr) {
+				continue
+			}
+			pc.write(msg)
+			generics.MakeMapIfNil(&pc.sentHashRequests)
+			pc.sentHashRequests[hr] = struct{}{}
+		}
+	}
+}
+
+func (pc *PeerConn) onReadHashes(msg *pp.Message) (err error) {
+	file := pc.t.getFileByPiecesRoot(msg.PiecesRoot)
+	filePieceHashes := pc.receivedHashPieces[msg.PiecesRoot]
+	if filePieceHashes == nil {
+		filePieceHashes = make([][32]byte, file.numPieces())
+		generics.MakeMapIfNil(&pc.receivedHashPieces)
+		pc.receivedHashPieces[msg.PiecesRoot] = filePieceHashes
+	}
+	if msg.ProofLayers != 0 {
+		// This isn't handled yet.
+		panic(msg.ProofLayers)
+	}
+	copy(filePieceHashes[msg.Index:], msg.Hashes)
+	root := merkle.RootWithPadHash(
+		filePieceHashes,
+		metainfo.HashForPiecePad(int64(pc.t.usualPieceSize())))
+	expectedPiecesRoot := file.piecesRoot.Unwrap()
+	if root == expectedPiecesRoot {
+		pc.protocolLogger.WithNames(v2HashesLogName).Levelf(
+			log.Info,
+			"got piece hashes for file %v (num pieces %v)",
+			file, file.numPieces())
+		for filePieceIndex, peerHash := range filePieceHashes {
+			torrentPieceIndex := file.BeginPieceIndex() + filePieceIndex
+			pc.t.piece(torrentPieceIndex).setV2Hash(peerHash)
+		}
+	} else {
+		pc.protocolLogger.WithNames(v2HashesLogName).Levelf(
+			log.Debug,
+			"peer file piece hashes root mismatch: %x != %x",
+			root, expectedPiecesRoot)
+	}
+	return nil
+}
+
+type hashRequest struct {
+	piecesRoot                            [32]byte
+	baseLayer, index, length, proofLayers pp.Integer
+}
+
+func (hr hashRequest) toMessage() pp.Message {
+	return pp.Message{
+		Type:        pp.HashRequest,
+		PiecesRoot:  hr.piecesRoot,
+		BaseLayer:   hr.baseLayer,
+		Index:       hr.index,
+		Length:      hr.length,
+		ProofLayers: hr.proofLayers,
+	}
+}
+
+func hashRequestFromMessage(m pp.Message) hashRequest {
+	return hashRequest{
+		piecesRoot:  m.PiecesRoot,
+		baseLayer:   m.BaseLayer,
+		index:       m.Index,
+		length:      m.Length,
+		proofLayers: m.ProofLayers,
 	}
 }

@@ -4,8 +4,12 @@
 package sqliteStorage
 
 import (
+	"encoding/hex"
 	"io"
+	"sync"
+	"time"
 
+	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/squirrel"
 
 	"github.com/anacrolix/torrent/metainfo"
@@ -20,35 +24,57 @@ func NewDirectStorage(opts NewDirectStorageOpts) (_ storage.ClientImplCloser, er
 		return
 	}
 	return &client{
-		cache,
-		cache.GetCapacity,
+		cache: cache,
 	}, nil
 }
 
+// Creates a storage.ClientImpl from a provided squirrel.Cache. The caller is responsible for
+// closing the squirrel.Cache.
 func NewWrappingClient(cache *squirrel.Cache) storage.ClientImpl {
 	return &client{
-		cache,
-		cache.GetCapacity,
+		cache: cache,
 	}
 }
 
 type client struct {
-	*squirrel.Cache
-	capacity func() (int64, bool)
+	cache           *squirrel.Cache
+	capacityMu      sync.Mutex
+	capacityFetched time.Time
+	capacityCap     int64
+	capacityCapped  bool
+}
+
+func (c *client) Close() error {
+	return c.cache.Close()
+}
+
+func (c *client) capacity() (cap int64, capped bool) {
+	c.capacityMu.Lock()
+	defer c.capacityMu.Unlock()
+	if !c.capacityFetched.IsZero() && time.Since(c.capacityFetched) < time.Second {
+		cap, capped = c.capacityCap, c.capacityCapped
+		return
+	}
+	c.capacityCap, c.capacityCapped = c.cache.GetCapacity()
+	// Should this go before or after the capacityCap and capacityCapped assignments?
+	c.capacityFetched = time.Now()
+	cap, capped = c.capacityCap, c.capacityCapped
+	return
 }
 
 func (c *client) OpenTorrent(*metainfo.Info, metainfo.Hash) (storage.TorrentImpl, error) {
-	t := torrent{c.Cache}
-	return storage.TorrentImpl{Piece: t.Piece, Close: t.Close, Capacity: &c.capacity}, nil
+	t := torrent{c.cache}
+	capFunc := c.capacity
+	return storage.TorrentImpl{PieceWithHash: t.Piece, Close: t.Close, Capacity: &capFunc}, nil
 }
 
 type torrent struct {
 	c *squirrel.Cache
 }
 
-func (t torrent) Piece(p metainfo.Piece) storage.PieceImpl {
+func (t torrent) Piece(p metainfo.Piece, pieceHash g.Option[[]byte]) storage.PieceImpl {
 	ret := piece{
-		sb: t.c.OpenWithLength(p.Hash().HexString(), p.Length()),
+		sb: t.c.OpenWithLength(hex.EncodeToString(pieceHash.Unwrap()), p.Length()),
 	}
 	ret.ReaderAt = &ret.sb
 	ret.WriterAt = &ret.sb

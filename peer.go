@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
@@ -224,9 +225,9 @@ func (cn *Peer) statusFlags() (ret string) {
 	if cn.choking {
 		c('c')
 	}
-	c('-')
+	c(':')
 	ret += cn.connectionFlags()
-	c('-')
+	c(':')
 	if cn.peerInterested {
 		c('i')
 	}
@@ -331,6 +332,13 @@ func (p *Peer) close() {
 	for _, f := range p.callbacks.PeerClosed {
 		f(p)
 	}
+}
+
+func (p *Peer) Close() error {
+	p.locker().Lock()
+	defer p.locker().Unlock()
+	p.close()
+	return nil
 }
 
 // Peer definitely has a piece, for purposes of requesting. So it's not sufficient that we think
@@ -600,9 +608,13 @@ func (c *Peer) receiveChunk(msg *pp.Message) error {
 	}
 	req := c.t.requestIndexFromRequest(ppReq)
 
-	if c.bannableAddr.Ok {
-		t.smartBanCache.RecordBlock(c.bannableAddr.Value, req, msg.Piece)
-	}
+	recordBlockForSmartBan := sync.OnceFunc(func() {
+		c.recordBlockForSmartBan(req, msg.Piece)
+	})
+	// This needs to occur before we return, but we try to do it when the client is unlocked. It
+	// can't be done before checking if chunks are valid because they won't be deallocated by piece
+	// hashing if they're out of bounds.
+	defer recordBlockForSmartBan()
 
 	if c.peerChoking {
 		chunksReceived.Add("while choked", 1)
@@ -683,6 +695,8 @@ func (c *Peer) receiveChunk(msg *pp.Message) error {
 	err = func() error {
 		cl.unlock()
 		defer cl.lock()
+		// Opportunistically do this here while we aren't holding the client lock.
+		recordBlockForSmartBan()
 		concurrentChunkWrites.Add(1)
 		defer concurrentChunkWrites.Add(-1)
 		// Write the chunk out. Note that the upper bound on chunk writing concurrency will be the
@@ -874,4 +888,10 @@ func (p *Peer) decPeakRequests() {
 	// 	panic(p.peakRequests)
 	// }
 	p.peakRequests--
+}
+
+func (p *Peer) recordBlockForSmartBan(req RequestIndex, blockData []byte) {
+	if p.bannableAddr.Ok {
+		p.t.smartBanCache.RecordBlock(p.bannableAddr.Value, req, blockData)
+	}
 }

@@ -44,8 +44,8 @@ func serve() (cmd bargle.Command) {
 			if err != nil {
 				return fmt.Errorf("building info from path %q: %w", filePath, err)
 			}
-			for _, fi := range info.Files {
-				log.Printf("added %q", fi.Path)
+			for _, fi := range info.UpvertedFiles() {
+				log.Printf("added %q", fi.BestPath())
 			}
 			mi := metainfo.MetaInfo{
 				InfoBytes: bencode.MustMarshal(info),
@@ -61,7 +61,7 @@ func serve() (cmd bargle.Command) {
 				Storage: storage.NewFileOpts(storage.NewFileClientOpts{
 					ClientBaseDir: filePath,
 					FilePathMaker: func(opts storage.FilePathMakerOpts) string {
-						return filepath.Join(opts.File.Path...)
+						return filepath.Join(opts.File.BestPath()...)
 					},
 					TorrentDirMaker: nil,
 					PieceCompletion: pc,
