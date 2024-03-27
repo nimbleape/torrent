@@ -3,7 +3,6 @@ package torrent
 import (
 	"context"
 	"fmt"
-	"github.com/anacrolix/torrent/webtorrent"
 	"net"
 	netHttp "net/http"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/anacrolix/torrent/tracker"
 	httpTracker "github.com/anacrolix/torrent/tracker/http"
+	"github.com/anacrolix/torrent/webtorrent"
 )
 
 type websocketTrackerStatus struct {

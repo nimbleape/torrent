@@ -18,8 +18,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/anacrolix/torrent/webtorrent"
-
 	"github.com/anacrolix/chansync"
 	"github.com/anacrolix/chansync/events"
 	"github.com/anacrolix/dht/v2"

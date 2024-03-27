@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/anacrolix/torrent/webtorrent"
-
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/anacrolix/log"
@@ -19,6 +17,7 @@ import (
 	"github.com/anacrolix/torrent/mse"
 	"github.com/anacrolix/torrent/storage"
 	"github.com/anacrolix/torrent/version"
+	"github.com/anacrolix/torrent/webtorrent"
 )
 
 type Observers struct {

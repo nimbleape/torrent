@@ -2,11 +2,6 @@ package torrent
 
 import (
 	"errors"
-	"github.com/anacrolix/torrent/internal/testutil"
-	"github.com/anacrolix/torrent/tracker"
-	"github.com/anacrolix/torrent/webtorrent"
-	"github.com/gorilla/websocket"
-	"github.com/stretchr/testify/require"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +9,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
+
+	"github.com/anacrolix/torrent/internal/testutil"
+	"github.com/anacrolix/torrent/tracker"
+	"github.com/anacrolix/torrent/webtorrent"
 )
 
 func TestClientInvalidTracker(t *testing.T) {
