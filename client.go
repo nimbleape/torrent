@@ -35,6 +35,7 @@ import (
 	"github.com/dustin/go-humanize"
 	gbtree "github.com/google/btree"
 	"github.com/pion/datachannel"
+	"github.com/pion/webrtc/v3"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/internal/check"
@@ -314,6 +315,13 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 	if cl.config.Observers != nil {
 		obs = &cl.config.Observers.Trackers
 	}
+	var ICEServers []webrtc.ICEServer
+	if cl.config.ICEServerList != nil {
+		ICEServers = cl.config.ICEServerList
+	} else if cl.config.ICEServers != nil {
+		ICEServers = []webrtc.ICEServer{{URLs: cl.config.ICEServers}}
+	}
+
 	cl.websocketTrackers = websocketTrackers{
 		obs:    obs,
 		PeerId: cl.peerID,
@@ -333,7 +341,7 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 		},
 		Proxy:                      cl.config.HTTPProxy,
 		WebsocketTrackerHttpHeader: cl.config.WebsocketTrackerHttpHeader,
-		ICEServers:                 cl.config.ICEServers,
+		ICEServers:                 ICEServers,
 		DialContext:                cl.config.TrackerDialContext,
 		OnConn: func(dc datachannel.ReadWriteCloser, dcc webtorrent.DataChannelContext) {
 			cl.lock()
@@ -1867,8 +1875,14 @@ func (cl *Client) String() string {
 	return fmt.Sprintf("<%[1]T %[1]p>", cl)
 }
 
-func (cl *Client) ICEServers() []string {
-	return cl.config.ICEServers
+func (cl *Client) ICEServers() []webrtc.ICEServer {
+	var ICEServers []webrtc.ICEServer
+	if cl.config.ICEServerList != nil {
+		ICEServers = cl.config.ICEServerList
+	} else if cl.config.ICEServers != nil {
+		ICEServers = []webrtc.ICEServer{{URLs: cl.config.ICEServers}}
+	}
+	return ICEServers
 }
 
 // Returns connection-level aggregate connStats at the Client level. See the comment on

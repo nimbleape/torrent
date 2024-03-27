@@ -63,7 +63,7 @@ type TrackerClient struct {
 	pingTicker     *time.Ticker
 
 	WebsocketTrackerHttpHeader func() http.Header
-	ICEServers                 []string
+	ICEServers                 []webrtc.ICEServer
 }
 
 func (me *TrackerClient) Stats() TrackerClientStats {

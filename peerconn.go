@@ -1179,7 +1179,15 @@ func (c *PeerConn) pexEvent(t pexEventType) (_ pexEvent, err error) {
 }
 
 func (pc *PeerConn) String() string {
-	return fmt.Sprintf("%T %p [id=%+q, exts=%v, v=%q]", pc, pc, pc.PeerID, pc.PeerExtensionBytes, pc.PeerClientName.Load())
+	return fmt.Sprintf(
+		"%T %p [flags=%v id=%+q, exts=%v, v=%q]",
+		pc,
+		pc,
+		pc.connectionFlags(),
+		pc.PeerID,
+		pc.PeerExtensionBytes,
+		pc.PeerClientName.Load(),
+	)
 }
 
 // Returns the pieces the peer could have based on their claims. If we don't know how many pieces
@@ -1280,6 +1288,11 @@ func (pc *PeerConn) requestMissingHashes() {
 file:
 	for _, file := range info.UpvertedFiles() {
 		fileNumPieces := int((file.Length + info.PieceLength - 1) / info.PieceLength)
+		// We would be requesting the leaves, the file must be short enough that we can just do with
+		// the pieces root as the piece hash.
+		if fileNumPieces <= 1 {
+			continue
+		}
 		curFileBeginPiece := nextFileBeginPiece
 		nextFileBeginPiece += fileNumPieces
 		haveAllHashes := true
@@ -1293,11 +1306,6 @@ file:
 			}
 		}
 		if haveAllHashes {
-			continue
-		}
-		// We would be requesting the leaves, the file must be short enough that we can just do with
-		// the pieces root as the piece hash.
-		if fileNumPieces <= 1 {
 			continue
 		}
 		piecesRoot := file.PiecesRoot.Unwrap()
