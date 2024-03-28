@@ -302,7 +302,7 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 				Err: err,
 			},
 			Event:    "",
-			InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
+			InfoHash: infohash.T(infoHash).HexString(),
 		})
 	}
 	if err != nil {
@@ -333,7 +333,7 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 			Err: nil,
 		},
 		Event:    req.Event,
-		InfoHash: infohash.HashBytes(infoHash[:]).HexString(),
+		InfoHash: infohash.T(infoHash).HexString(),
 	}
 
 	data, err := json.Marshal(req)
