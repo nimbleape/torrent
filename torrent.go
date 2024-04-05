@@ -10,6 +10,7 @@ import (
 	"hash"
 	"io"
 	"math/rand"
+	"net"
 	"net/netip"
 	"net/url"
 	"sort"
@@ -2200,7 +2201,14 @@ func (t *Torrent) statsLocked() (ret TorrentStats) {
 func (t *Torrent) numTotalPeers() int {
 	peers := make(map[string]struct{})
 	for conn := range t.conns {
-		ra := conn.conn.RemoteAddr()
+		ra := func() net.Addr {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Println("Recovered in conn.conn.RemoteAddr()", r)
+				}
+			}()
+			return conn.conn.RemoteAddr()
+		}()
 		if ra == nil {
 			// It's been closed and doesn't support RemoteAddr.
 			continue
