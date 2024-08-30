@@ -32,7 +32,7 @@ import (
 	"github.com/anacrolix/multiless"
 	"github.com/anacrolix/sync"
 	"github.com/pion/datachannel"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
 
