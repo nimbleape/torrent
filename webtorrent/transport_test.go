@@ -5,7 +5,7 @@ import (
 
 	"github.com/anacrolix/log"
 	qt "github.com/frankban/quicktest"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
 func TestClosingPeerConnectionDoesNotCloseUnopenedDataChannel(t *testing.T) {
@@ -26,9 +26,9 @@ func TestClosingPeerConnectionDoesNotCloseUnopenedDataChannel(t *testing.T) {
 		t.Fatal("DataChannel.OnClose handler called")
 	})
 	t.Logf("data channel ready state before close: %v", dc.ReadyState())
-	dc.OnError(func(err error) {
-		t.Logf("data channel error: %v", err)
-	})
+	// dc.OnError(func(err error) {
+	// 	t.Logf("data channel error: %v", err)
+	// })
 	pc.Close()
 	c.Check(dc.ReadyState(), qt.Equals, webrtc.DataChannelStateClosed)
 	<-peerConnClosed
