@@ -65,7 +65,7 @@ type TrackerClient struct {
 	WebsocketTrackerHttpHeader func() http.Header
 	ICEServers                 []webrtc.ICEServer
 
-	transportStats []webrtc.StatsReport
+	rtcPeerConns map[string]*wrappedPeerConnection
 }
 
 func (me *TrackerClient) Stats() TrackerClientStats {
@@ -276,9 +276,11 @@ func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte
 		return fmt.Errorf("creating offer: %w", err)
 	}
 
+	// save the leecher peer connections
+	tc.storePeerConnection(offerIDBinary, pc)
+
 	pc.OnClose(func() {
-		stats := pc.GetStats()
-		tc.transportStats = append(tc.transportStats, stats)
+		delete(tc.rtcPeerConns, offerIDBinary)
 	})
 
 	err = tc.announce(event, infoHash, []outboundOffer{{
@@ -362,8 +364,17 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 	return nil
 }
 
-func (tc *TrackerClient) TransportStats() []webrtc.StatsReport {
-	return tc.transportStats
+// Calculate the stats for all the peer connections the moment they are requested.
+// As the stats will change over the life of a peer connection, this ensures that
+// the updated values are returned.
+func (tc *TrackerClient) RtcPeerConnStats() map[string]webrtc.StatsReport {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	sr := make(map[string]webrtc.StatsReport)
+	for id, pc := range tc.rtcPeerConns {
+		sr[id] = pc.GetStats()
+	}
+	return sr
 }
 
 func (tc *TrackerClient) writeMessage(data []byte) error {
@@ -426,6 +437,10 @@ func (tc *TrackerClient) handleOffer(
 	if err != nil {
 		return fmt.Errorf("creating answering peer connection: %w", err)
 	}
+
+	// save the seeder peer connections
+	tc.storePeerConnection(offerContext.Id, peerConnection)
+
 	response := AnnounceResponse{
 		Action:   "announce",
 		InfoHash: binaryToJsonString(offerContext.InfoHash[:]),
@@ -467,4 +482,13 @@ func (tc *TrackerClient) handleAnswer(offerId string, answer webrtc.SessionDescr
 	}
 	delete(tc.outboundOffers, offerId)
 	go tc.Announce(tracker.None, offer.infoHash)
+}
+
+func (tc *TrackerClient) storePeerConnection(offerId string, pc *wrappedPeerConnection) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	if tc.rtcPeerConns == nil {
+		tc.rtcPeerConns = make(map[string]*wrappedPeerConnection)
+	}
+	tc.rtcPeerConns[offerId] = pc
 }
