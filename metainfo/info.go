@@ -13,11 +13,12 @@ import (
 
 // The info dictionary. See BEP 3 and BEP 52.
 type Info struct {
-	PieceLength int64  `bencode:"piece length"` // BEP3
-	Pieces      []byte `bencode:"pieces"`       // BEP3
-	Name        string `bencode:"name"`         // BEP3
-	NameUtf8    string `bencode:"name.utf-8,omitempty"`
-	Length      int64  `bencode:"length,omitempty"` // BEP3, mutually exclusive with Files
+	PieceLength int64 `bencode:"piece length"` // BEP3
+	// BEP 3. This can be omitted because isn't needed in non-hybrid v2 infos. See BEP 52.
+	Pieces   []byte `bencode:"pieces,omitempty"`
+	Name     string `bencode:"name"` // BEP3
+	NameUtf8 string `bencode:"name.utf-8,omitempty"`
+	Length   int64  `bencode:"length,omitempty"` // BEP3, mutually exclusive with Files
 	ExtendedFileAttrs
 	Private *bool `bencode:"private,omitempty"` // BEP27
 	// TODO: Document this field.
@@ -150,9 +151,8 @@ func (info *Info) IsDir() bool {
 	return len(info.Files) != 0
 }
 
-// The files field, converted up from the old single-file in the parent info
-// dict if necessary. This is a helper to avoid having to conditionally handle
-// single and multi-file torrent infos.
+// The files field, converted up from the old single-file in the parent info dict if necessary. This
+// is a helper to avoid having to conditionally handle single and multi-file torrent infos.
 func (info *Info) UpvertedFiles() (files []FileInfo) {
 	if info.HasV2() {
 		info.FileTree.upvertedFiles(info.PieceLength, func(fi FileInfo) {
@@ -160,6 +160,12 @@ func (info *Info) UpvertedFiles() (files []FileInfo) {
 		})
 		return
 	}
+	return info.UpvertedV1Files()
+}
+
+// UpvertedFiles but specific to the files listed in the v1 info fields. This will include padding
+// files for example that wouldn't appear in v2 file trees.
+func (info *Info) UpvertedV1Files() (files []FileInfo) {
 	if len(info.Files) == 0 {
 		return []FileInfo{{
 			Length: info.Length,

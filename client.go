@@ -25,7 +25,6 @@ import (
 	. "github.com/anacrolix/generics"
 	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/log"
-	"github.com/anacrolix/missinggo/perf"
 	"github.com/anacrolix/missinggo/v2"
 	"github.com/anacrolix/missinggo/v2/bitmap"
 	"github.com/anacrolix/missinggo/v2/pproffd"
@@ -35,7 +34,7 @@ import (
 	"github.com/dustin/go-humanize"
 	gbtree "github.com/google/btree"
 	"github.com/pion/datachannel"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/internal/check"
@@ -98,6 +97,8 @@ type Client struct {
 	clientHolepunchAddrSets
 
 	defaultLocalLtepProtocolMap LocalLtepProtocolMap
+
+	upnpMappings []*upnpMapping
 }
 
 type ipStr string
@@ -236,6 +237,7 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 	cl.init(cfg)
 	go cl.acceptLimitClearer()
 	cl.initLogger()
+	//cl.logger.Levelf(log.Critical, "test after init")
 	defer func() {
 		if err != nil {
 			cl.Close()
@@ -315,17 +317,11 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 	if cl.config.Observers != nil {
 		obs = &cl.config.Observers.Trackers
 	}
-	var ICEServers []webrtc.ICEServer
-	if cl.config.ICEServerList != nil {
-		ICEServers = cl.config.ICEServerList
-	} else if cl.config.ICEServers != nil {
-		ICEServers = []webrtc.ICEServer{{URLs: cl.config.ICEServers}}
-	}
 
 	cl.websocketTrackers = websocketTrackers{
 		obs:    obs,
 		PeerId: cl.peerID,
-		Logger: cl.logger,
+		Logger: cl.logger.WithNames("websocketTrackers"),
 		GetAnnounceRequest: func(
 			event tracker.AnnounceEvent, infoHash [20]byte,
 		) (
@@ -341,7 +337,7 @@ func NewClient(cfg *ClientConfig) (cl *Client, err error) {
 		},
 		Proxy:                      cl.config.HTTPProxy,
 		WebsocketTrackerHttpHeader: cl.config.WebsocketTrackerHttpHeader,
-		ICEServers:                 ICEServers,
+		ICEServers:                 cl.ICEServers(),
 		DialContext:                cl.config.TrackerDialContext,
 		OnConn: func(dc datachannel.ReadWriteCloser, dcc webtorrent.DataChannelContext) {
 			cl.lock()
@@ -474,6 +470,7 @@ func (cl *Client) Close() (errs []error) {
 			errs = append(errs, err)
 		}
 	}
+	cl.clearPortMappings()
 	for i := range cl.onClose {
 		cl.onClose[len(cl.onClose)-1-i]()
 	}
@@ -736,7 +733,7 @@ func (cl *Client) initiateProtocolHandshakes(
 	if err != nil {
 		panic(err)
 	}
-	err = cl.initiateHandshakes(c, t)
+	err = cl.initiateHandshakes(ctx, c, t)
 	return
 }
 
@@ -928,10 +925,11 @@ func (cl *Client) incomingPeerPort() int {
 	return cl.LocalPort()
 }
 
-func (cl *Client) initiateHandshakes(c *PeerConn, t *Torrent) (err error) {
+func (cl *Client) initiateHandshakes(ctx context.Context, c *PeerConn, t *Torrent) (err error) {
 	if c.headerEncrypted {
 		var rw io.ReadWriter
-		rw, c.cryptoMethod, err = mse.InitiateHandshake(
+		rw, c.cryptoMethod, err = mse.InitiateHandshakeContext(
+			ctx,
 			struct {
 				io.Reader
 				io.Writer
@@ -950,7 +948,7 @@ func (cl *Client) initiateHandshakes(c *PeerConn, t *Torrent) (err error) {
 	// If we're sending the v1 infohash, and we know the v2 infohash, set the v2 upgrade bit. This
 	// means the peer can send the v2 infohash in the handshake to upgrade the connection.
 	localReservedBits.SetBit(pp.ExtensionBitV2Upgrade, g.Some(handshakeIh) == t.infoHash && t.infoHashV2.Ok)
-	ih, err := cl.connBtHandshake(c, &handshakeIh, localReservedBits)
+	ih, err := cl.connBtHandshake(context.TODO(), c, &handshakeIh, localReservedBits)
 	if err != nil {
 		return fmt.Errorf("bittorrent protocol handshake: %w", err)
 	}
@@ -1000,7 +998,6 @@ func (cl *Client) handshakeReceiverSecretKeys() mse.SecretKeyIter {
 
 // Do encryption and bittorrent handshakes as receiver.
 func (cl *Client) receiveHandshakes(c *PeerConn) (t *Torrent, err error) {
-	defer perf.ScopeTimerErr(&err)()
 	var rw io.ReadWriter
 	rw, c.headerEncrypted, c.cryptoMethod, err = handleEncryption(
 		c.rw(),
@@ -1028,7 +1025,7 @@ func (cl *Client) receiveHandshakes(c *PeerConn) (t *Torrent, err error) {
 		err = errors.New("connection does not have required header obfuscation")
 		return
 	}
-	ih, err := cl.connBtHandshake(c, nil, cl.config.Extensions)
+	ih, err := cl.connBtHandshake(context.TODO(), c, nil, cl.config.Extensions)
 	if err != nil {
 		return nil, fmt.Errorf("during bt handshake: %w", err)
 	}
@@ -1052,8 +1049,8 @@ func init() {
 		&successfulPeerWireProtocolHandshakePeerReservedBytes)
 }
 
-func (cl *Client) connBtHandshake(c *PeerConn, ih *metainfo.Hash, reservedBits PeerExtensionBits) (ret metainfo.Hash, err error) {
-	res, err := pp.Handshake(c.rw(), ih, cl.peerID, reservedBits)
+func (cl *Client) connBtHandshake(ctx context.Context, c *PeerConn, ih *metainfo.Hash, reservedBits PeerExtensionBits) (ret metainfo.Hash, err error) {
+	res, err := pp.Handshake(ctx, c.rw(), ih, cl.peerID, reservedBits)
 	if err != nil {
 		return
 	}

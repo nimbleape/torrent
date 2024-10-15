@@ -11,7 +11,7 @@ import (
 	"github.com/anacrolix/log"
 	"github.com/anacrolix/missinggo/v2/pproffd"
 	"github.com/pion/datachannel"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -38,14 +38,33 @@ type wrappedPeerConnection struct {
 	pproffd.CloseWrapper
 	span trace.Span
 	ctx  context.Context
+
+	onCloseHandler func()
 }
 
 func (me *wrappedPeerConnection) Close() error {
 	me.closeMu.Lock()
 	defer me.closeMu.Unlock()
+
+	me.onClose()
+
 	err := me.CloseWrapper.Close()
 	me.span.End()
 	return err
+}
+
+func (me *wrappedPeerConnection) OnClose(f func()) {
+	me.closeMu.Lock()
+	defer me.closeMu.Unlock()
+	me.onCloseHandler = f
+}
+
+func (me *wrappedPeerConnection) onClose() {
+	handler := me.onCloseHandler
+
+	if handler != nil {
+		handler()
+	}
 }
 
 func newPeerConnection(logger log.Logger, iceServers []webrtc.ICEServer) (*wrappedPeerConnection, error) {
@@ -70,7 +89,7 @@ func newPeerConnection(logger log.Logger, iceServers []webrtc.ICEServer) (*wrapp
 	}
 	// If the state change handler intends to call Close, it should call it on the wrapper.
 	wpc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		logger.Levelf(log.Warning, "webrtc PeerConnection state changed to %v", state)
+		logger.Levelf(log.Debug, "webrtc PeerConnection state changed to %v", state)
 		span.AddEvent("connection state changed", trace.WithAttributes(attribute.String("state", state.String())))
 	})
 	return wpc, nil

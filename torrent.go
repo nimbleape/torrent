@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"iter"
+	"maps"
 	"math/rand"
 	"net/netip"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -25,14 +27,13 @@ import (
 	. "github.com/anacrolix/generics"
 	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/log"
-	"github.com/anacrolix/missinggo/slices"
 	"github.com/anacrolix/missinggo/v2"
 	"github.com/anacrolix/missinggo/v2/bitmap"
 	"github.com/anacrolix/missinggo/v2/pubsub"
 	"github.com/anacrolix/multiless"
 	"github.com/anacrolix/sync"
 	"github.com/pion/datachannel"
-	"golang.org/x/exp/maps"
+	"github.com/pion/webrtc/v4"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/anacrolix/torrent/bencode"
@@ -163,7 +164,7 @@ type Torrent struct {
 	pex pexState
 
 	// Is On when all pieces are complete.
-	Complete chansync.Flag
+	complete chansync.Flag
 
 	// Torrent sources in use keyed by the source string.
 	activeSources sync.Map
@@ -172,7 +173,7 @@ type Torrent struct {
 	smartBanCache smartBanCache
 
 	// Large allocations reused between request state updates.
-	requestPieceStates []request_strategy.PieceRequestOrderState
+	requestPieceStates []g.Option[request_strategy.PieceRequestOrderState]
 	requestIndexes     []RequestIndex
 
 	disableTriggers bool
@@ -511,7 +512,8 @@ func (t *Torrent) setInfo(info *metainfo.Info) error {
 	}
 	if t.storageOpener != nil {
 		var err error
-		t.storage, err = t.storageOpener.OpenTorrent(info, *t.canonicalShortInfohash())
+		ctx := log.ContextWithLogger(context.Background(), t.logger)
+		t.storage, err = t.storageOpener.OpenTorrent(ctx, info, *t.canonicalShortInfohash())
 		if err != nil {
 			return fmt.Errorf("error opening torrent storage: %s", err)
 		}
@@ -519,7 +521,8 @@ func (t *Torrent) setInfo(info *metainfo.Info) error {
 	t.nameMu.Lock()
 	t.info = info
 	t.nameMu.Unlock()
-	t._chunksPerRegularPiece = chunkIndexType((pp.Integer(t.usualPieceSize()) + t.chunkSize - 1) / t.chunkSize)
+	t._chunksPerRegularPiece = chunkIndexType(
+		(pp.Integer(t.usualPieceSize()) + t.chunkSize - 1) / t.chunkSize)
 	t.updateComplete()
 	t.displayName = "" // Save a few bytes lol.
 	t.initFiles()
@@ -863,24 +866,28 @@ func (t *Torrent) writeStatus(w io.Writer) {
 	fmt.Fprintln(w)
 
 	fmt.Fprintf(w, "Enabled trackers:\n")
-	func() {
+	{
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "    URL\tExtra\n")
-		for _, ta := range slices.Sort(slices.FromMapElems(t.trackerAnnouncers), func(l, r torrentTrackerAnnouncer) bool {
-			lu := l.URL()
-			ru := r.URL()
-			var luns, runs url.URL = *lu, *ru
-			luns.Scheme = ""
-			runs.Scheme = ""
-			var ml missinggo.MultiLess
-			ml.StrictNext(luns.String() == runs.String(), luns.String() < runs.String())
-			ml.StrictNext(lu.String() == ru.String(), lu.String() < ru.String())
-			return ml.Less()
-		}).([]torrentTrackerAnnouncer) {
+		sortedTrackerAnnouncers := slices.SortedFunc(
+			maps.Values(t.trackerAnnouncers),
+			func(l, r torrentTrackerAnnouncer) int {
+				lu := l.URL()
+				ru := r.URL()
+				var luns, runs url.URL = *lu, *ru
+				luns.Scheme = ""
+				runs.Scheme = ""
+				var ml multiless.Computation
+				ml = multiless.EagerOrdered(ml, luns.String(), runs.String())
+				ml = multiless.EagerOrdered(ml, lu.String(), ru.String())
+				return ml.OrderingInt()
+			},
+		)
+		for _, ta := range sortedTrackerAnnouncers {
 			fmt.Fprintf(tw, "    %q\t%v\n", ta.URL(), ta.statusLine())
 		}
 		tw.Flush()
-	}()
+	}
 
 	fmt.Fprintf(w, "DHT Announces: %d\n", t.numDHTAnnounces)
 
@@ -889,29 +896,31 @@ func (t *Torrent) writeStatus(w io.Writer) {
 	fmt.Fprintf(w, "webseeds:\n")
 	t.writePeerStatuses(w, maps.Values(t.webSeeds))
 
-	peerConns := maps.Keys(t.conns)
 	// Peers without priorities first, then those with. I'm undecided about how to order peers
 	// without priorities.
-	sort.Slice(peerConns, func(li, ri int) bool {
-		l := peerConns[li]
-		r := peerConns[ri]
+	peerConns := slices.SortedFunc(maps.Keys(t.conns), func(l, r *PeerConn) int {
 		ml := multiless.New()
 		lpp := g.ResultFromTuple(l.peerPriority()).ToOption()
 		rpp := g.ResultFromTuple(r.peerPriority()).ToOption()
 		ml = ml.Bool(lpp.Ok, rpp.Ok)
 		ml = ml.Uint32(rpp.Value, lpp.Value)
-		return ml.Less()
+		return ml.OrderingInt()
 	})
 
 	fmt.Fprintf(w, "%v peer conns:\n", len(peerConns))
-	t.writePeerStatuses(w, g.SliceMap(peerConns, func(pc *PeerConn) *Peer {
-		return &pc.Peer
-	}))
+	var peerIter iter.Seq[*Peer] = func(yield func(*Peer) bool) {
+		for _, pc := range peerConns {
+			if !yield(&pc.Peer) {
+				return
+			}
+		}
+	}
+	t.writePeerStatuses(w, peerIter)
 }
 
-func (t *Torrent) writePeerStatuses(w io.Writer, peers []*Peer) {
+func (t *Torrent) writePeerStatuses(w io.Writer, peers iter.Seq[*Peer]) {
 	var buf bytes.Buffer
-	for _, c := range peers {
+	for c := range peers {
 		fmt.Fprintf(w, "- ")
 		buf.Reset()
 		c.writeStatus(&buf)
@@ -1066,7 +1075,6 @@ func (t *Torrent) offsetRequest(off int64) (req Request, ok bool) {
 }
 
 func (t *Torrent) writeChunk(piece int, begin int64, data []byte) (err error) {
-	//defer perf.ScopeTimerErr(&err)()
 	n, err := t.pieces[piece].Storage().WriteAt(data, begin)
 	if err == nil && n != len(data) {
 		err = io.ErrShortWrite
@@ -1157,8 +1165,8 @@ func (t *Torrent) hashPiece(piece pieceIndex) (
 		}
 		h := pieceHash.New()
 		differingPeers, err = t.hashPieceWithSpecificHash(piece, h)
-		// For a hybrid torrent, we work with the v2 files, but if we use a v1 hash, we can assume that
-		// the pieces are padded with zeroes.
+		// For a hybrid torrent, we work with the v2 files, but if we use a v1 hash, we can assume
+		// that the pieces are padded with zeroes.
 		if t.info.FilesArePieceAligned() {
 			paddingLen := p.Info().V1Length() - p.Info().Length()
 			written, err := io.CopyN(h, zeroReader, paddingLen)
@@ -1417,7 +1425,7 @@ func (t *Torrent) maybeNewConns() {
 	t.openNewConns()
 }
 
-func (t *Torrent) onPiecePendingTriggers(piece pieceIndex, reason string) {
+func (t *Torrent) onPiecePendingTriggers(piece pieceIndex, reason updateRequestReason) {
 	if t._pendingPieces.Contains(uint32(piece)) {
 		t.iterPeers(func(c *Peer) {
 			// if c.requestState.Interested {
@@ -1455,20 +1463,20 @@ func (t *Torrent) updatePiecePriorityNoTriggers(piece pieceIndex) (pendingChange
 	}
 }
 
-func (t *Torrent) updatePiecePriority(piece pieceIndex, reason string) {
+func (t *Torrent) updatePiecePriority(piece pieceIndex, reason updateRequestReason) {
 	if t.updatePiecePriorityNoTriggers(piece) && !t.disableTriggers {
 		t.onPiecePendingTriggers(piece, reason)
 	}
 	t.updatePieceRequestOrderPiece(piece)
 }
 
-func (t *Torrent) updateAllPiecePriorities(reason string) {
+func (t *Torrent) updateAllPiecePriorities(reason updateRequestReason) {
 	t.updatePiecePriorities(0, t.numPieces(), reason)
 }
 
 // Update all piece priorities in one hit. This function should have the same
 // output as updatePiecePriority, but across all pieces.
-func (t *Torrent) updatePiecePriorities(begin, end pieceIndex, reason string) {
+func (t *Torrent) updatePiecePriorities(begin, end pieceIndex, reason updateRequestReason) {
 	for i := begin; i < end; i++ {
 		t.updatePiecePriority(i, reason)
 	}
@@ -1514,7 +1522,7 @@ func (t *Torrent) pendRequest(req RequestIndex) {
 	t.piece(t.pieceIndexOfRequestIndex(req)).pendChunkIndex(req % t.chunksPerRegularPiece())
 }
 
-func (t *Torrent) pieceCompletionChanged(piece pieceIndex, reason string) {
+func (t *Torrent) pieceCompletionChanged(piece pieceIndex, reason updateRequestReason) {
 	t.cl.event.Broadcast()
 	if t.pieceComplete(piece) {
 		t.onPieceCompleted(piece)
@@ -1706,6 +1714,20 @@ func (t *Torrent) addTrackers(announceList [][]string) {
 	}
 	t.startMissingTrackerScrapers()
 	t.updateWantPeersEvent()
+}
+
+func (t *Torrent) modifyTrackers(announceList [][]string) {
+	var workers errgroup.Group
+	for _, v := range t.trackerAnnouncers {
+		workers.Go(func() error {
+			v.Stop()
+			return nil
+		})
+	}
+	workers.Wait()
+
+	clear(t.metainfo.AnnounceList)
+	t.addTrackers(announceList)
 }
 
 // Don't call this before the info is available.
@@ -1908,10 +1930,11 @@ func (t *Torrent) startWebsocketAnnouncer(u url.URL, shortInfohash [20]byte) tor
 	go func() {
 		err := wtc.Announce(tracker.Started, shortInfohash)
 		if err != nil {
-			t.logger.WithDefaultLevel(log.Warning).Printf(
-				"error in initial announce to %q: %v",
-				u.String(), err,
-			)
+			level := log.Warning
+			if t.closed.IsSet() {
+				level = log.Debug
+			}
+			t.logger.Levelf(level, "error doing initial announce to %q: %v", u.String(), err)
 		}
 	}()
 	return wst
@@ -1973,6 +1996,7 @@ func (t *Torrent) startScrapingTrackerWithInfohash(u *url.URL, urlStr string, sh
 			u:               *u,
 			t:               t,
 			lookupTrackerIp: t.cl.config.LookupTrackerIp,
+			stopCh:          make(chan struct{}),
 		}
 		go newAnnouncer.Run()
 		return newAnnouncer
@@ -2200,7 +2224,7 @@ func (t *Torrent) statsLocked() (ret TorrentStats) {
 func (t *Torrent) numTotalPeers() int {
 	peers := make(map[string]struct{})
 	for conn := range t.conns {
-		ra := conn.conn.RemoteAddr()
+		ra := conn.RemoteAddr
 		if ra == nil {
 			// It's been closed and doesn't support RemoteAddr.
 			continue
@@ -2430,7 +2454,7 @@ func (t *Torrent) pieceHashed(piece pieceIndex, passed bool, hashIoErr error) {
 				}
 			}
 			t.clearPieceTouchers(piece)
-			slices.Sort(bannableTouchers, connLessTrusted)
+			slices.SortFunc(bannableTouchers, comparePeerTrust)
 
 			if t.cl.config.Debug {
 				t.logger.Printf(
@@ -2894,12 +2918,13 @@ func (t *Torrent) addWebSeed(url string, opts ...AddWebSeedsOpt) {
 	for _, f := range t.callbacks().NewPeer {
 		f(&ws.peer)
 	}
-	ws.peer.logger = t.logger.WithContextValue(&ws)
+	ws.peer.logger = t.logger.WithContextValue(&ws).WithNames("webseed")
 	ws.peer.peerImpl = &ws
 	if t.haveInfo() {
 		ws.onGotInfo(t.info)
 	}
 	t.webSeeds[url] = &ws.peer
+	ws.peer.updateRequests("Torrent.addWebSeed")
 }
 
 func (t *Torrent) peerIsActive(p *Peer) (active bool) {
@@ -2928,7 +2953,7 @@ func (t *Torrent) pieceRequestIndexOffset(piece pieceIndex) RequestIndex {
 }
 
 func (t *Torrent) updateComplete() {
-	t.Complete.SetBool(t.haveAllPieces())
+	t.complete.SetBool(t.haveAllPieces())
 }
 
 func (t *Torrent) cancelRequest(r RequestIndex) *Peer {
@@ -2990,6 +3015,18 @@ func (t *Torrent) iterUndirtiedRequestIndexesInPiece(
 		pieceRequestIndexOffset, pieceRequestIndexOffset+t.pieceNumChunks(piece),
 		f,
 	)
+}
+
+type webRtcStatsReports map[string]webrtc.StatsReport
+
+func (t *Torrent) GetWebRtcPeerConnStats() map[string]webRtcStatsReports {
+	stats := make(map[string]webRtcStatsReports)
+	trackersMap := t.cl.websocketTrackers.clients
+	for i, trackerClient := range trackersMap {
+		ts := trackerClient.RtcPeerConnStats()
+		stats[i] = ts
+	}
+	return stats
 }
 
 type requestState struct {
@@ -3254,4 +3291,9 @@ file:
 		pieceLayers[string(key[:])] = value.String()
 	}
 	return
+}
+
+// Is On when all pieces are complete.
+func (t *Torrent) Complete() chansync.ReadOnlyFlag {
+	return &t.complete
 }

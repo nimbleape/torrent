@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -135,7 +136,7 @@ func testEmptyFilesAndZeroPieceLength(t *testing.T, cfg *ClientConfig) {
 	defer tt.Drop()
 	tt.DownloadAll()
 	require.True(t, cl.WaitAll())
-	assert.True(t, tt.Complete.Bool())
+	assert.True(t, tt.Complete().Bool())
 	assert.True(t, missinggo.FilePathExists(fp))
 }
 
@@ -187,7 +188,7 @@ func TestTorrentMetainfoIncompleteMetadata(t *testing.T) {
 
 	var pex PeerExtensionBits
 	pex.SetBit(pp.ExtensionBitLtep, true)
-	hr, err := pp.Handshake(nc, &ih, [20]byte{}, pex)
+	hr, err := pp.Handshake(context.Background(), nc, &ih, [20]byte{}, pex)
 	require.NoError(t, err)
 	assert.True(t, hr.PeerExtensionBits.GetBit(pp.ExtensionBitLtep))
 	assert.EqualValues(t, cl.PeerID(), hr.PeerID)

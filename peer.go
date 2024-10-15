@@ -57,7 +57,7 @@ type (
 		lastChunkSent           time.Time
 
 		// Stuff controlled by the local peer.
-		needRequestUpdate    string
+		needRequestUpdate    updateRequestReason
 		requestState         request_strategy.PeerRequestState
 		updateRequestsTimer  *time.Timer
 		lastRequestUpdate    time.Time
@@ -111,6 +111,8 @@ type (
 	}
 
 	peerRequests = orderedBitmap[RequestIndex]
+
+	updateRequestReason string
 )
 
 const (
@@ -122,6 +124,15 @@ const (
 	PeerSourcePex             = "X"
 	// The peer was given directly, such as through a magnet link.
 	PeerSourceDirect = "M"
+)
+
+// These are grouped because we might vary update request behaviour depending on the reason. I'm not
+// sure about the fact that multiple reasons can be triggered before an update runs, and only the
+// first will count. Possibly we should be signalling what behaviours are appropriate in the next
+// update instead.
+const (
+	peerUpdateRequestsPeerCancelReason   updateRequestReason = "Peer.cancel"
+	peerUpdateRequestsRemoteRejectReason updateRequestReason = "Peer.remoteRejectedRequest"
 )
 
 // Returns the Torrent a Peer belongs to. Shouldn't change for the lifetime of the Peer. May be nil
@@ -480,12 +491,12 @@ func (me *Peer) cancel(r RequestIndex) {
 	}
 	me.decPeakRequests()
 	if me.isLowOnRequests() {
-		me.updateRequests("Peer.cancel")
+		me.updateRequests(peerUpdateRequestsPeerCancelReason)
 	}
 }
 
 // Sets a reason to update requests, and if there wasn't already one, handle it.
-func (cn *Peer) updateRequests(reason string) {
+func (cn *Peer) updateRequests(reason updateRequestReason) {
 	if cn.needRequestUpdate != "" {
 		return
 	}
@@ -574,7 +585,7 @@ func (c *Peer) remoteRejectedRequest(r RequestIndex) bool {
 		return false
 	}
 	if c.isLowOnRequests() {
-		c.updateRequests("Peer.remoteRejectedRequest")
+		c.updateRequests(peerUpdateRequestsRemoteRejectReason)
 	}
 	c.decExpectedChunkReceive(r)
 	return true
@@ -597,7 +608,7 @@ func (c *Peer) doChunkReadStats(size int64) {
 
 // Handle a received chunk from a peer.
 func (c *Peer) receiveChunk(msg *pp.Message) error {
-	chunksReceived.Add("total", 1)
+	ChunksReceived.Add("total", 1)
 
 	ppReq := newRequestFromMessage(msg)
 	t := c.t
@@ -617,17 +628,17 @@ func (c *Peer) receiveChunk(msg *pp.Message) error {
 	defer recordBlockForSmartBan()
 
 	if c.peerChoking {
-		chunksReceived.Add("while choked", 1)
+		ChunksReceived.Add("while choked", 1)
 	}
 
 	if c.validReceiveChunks[req] <= 0 {
-		chunksReceived.Add("unexpected", 1)
+		ChunksReceived.Add("unexpected", 1)
 		return errors.New("received unexpected chunk")
 	}
 	c.decExpectedChunkReceive(req)
 
 	if c.peerChoking && c.peerAllowedFast.Contains(pieceIndex(ppReq.Index)) {
-		chunksReceived.Add("due to allowed fast", 1)
+		ChunksReceived.Add("due to allowed fast", 1)
 	}
 
 	// The request needs to be deleted immediately to prevent cancels occurring asynchronously when
@@ -650,7 +661,7 @@ func (c *Peer) receiveChunk(msg *pp.Message) error {
 				c.updateRequests("Peer.receiveChunk deleted request")
 			}
 		} else {
-			chunksReceived.Add("unintended", 1)
+			ChunksReceived.Add("unintended", 1)
 		}
 	}
 
@@ -659,7 +670,7 @@ func (c *Peer) receiveChunk(msg *pp.Message) error {
 	// Do we actually want this chunk?
 	if t.haveChunk(ppReq) {
 		// panic(fmt.Sprintf("%+v", ppReq))
-		chunksReceived.Add("redundant", 1)
+		ChunksReceived.Add("redundant", 1)
 		c.allStats(add(1, func(cs *ConnStats) *Count { return &cs.ChunksReadWasted }))
 		return nil
 	}
@@ -786,7 +797,7 @@ func (c *Peer) deleteRequest(r RequestIndex) bool {
 	return true
 }
 
-func (c *Peer) deleteAllRequests(reason string) {
+func (c *Peer) deleteAllRequests(reason updateRequestReason) {
 	if c.requestState.Requests.IsEmpty() {
 		return
 	}
@@ -843,8 +854,8 @@ type connectionTrust struct {
 	NetGoodPiecesDirted int64
 }
 
-func (l connectionTrust) Less(r connectionTrust) bool {
-	return multiless.New().Bool(l.Implicit, r.Implicit).Int64(l.NetGoodPiecesDirted, r.NetGoodPiecesDirted).Less()
+func (l connectionTrust) Cmp(r connectionTrust) int {
+	return multiless.New().Bool(l.Implicit, r.Implicit).Int64(l.NetGoodPiecesDirted, r.NetGoodPiecesDirted).OrderingInt()
 }
 
 // Returns a new Bitmap that includes bits for all pieces the peer could have based on their claims.

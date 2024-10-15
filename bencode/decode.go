@@ -69,6 +69,23 @@ func (d *Decoder) Decode(v interface{}) (err error) {
 	return
 }
 
+// Check for EOF in the decoder input stream. Used to assert the input ends on a clean message
+// boundary.
+func (d *Decoder) ReadEOF() error {
+	_, err := d.r.ReadByte()
+	if err == nil {
+		err := d.r.UnreadByte()
+		if err != nil {
+			panic(err)
+		}
+		return errors.New("expected EOF")
+	}
+	if err == io.EOF {
+		return nil
+	}
+	return fmt.Errorf("expected EOF, got %w", err)
+}
+
 func checkForUnexpectedEOF(err error, offset int64) {
 	if err == io.EOF {
 		panic(&SyntaxError{
@@ -281,7 +298,7 @@ type dictField struct {
 }
 
 // Returns specifics for parsing a dict field value.
-func getDictField(dict reflect.Type, key string) (_ dictField, err error) {
+func getDictField(dict reflect.Type, key reflect.Value) (_ dictField, err error) {
 	// get valuev as a map value or as a struct field
 	switch k := dict.Kind(); k {
 	case reflect.Map:
@@ -293,13 +310,18 @@ func getDictField(dict reflect.Type, key string) (_ dictField, err error) {
 						mapValue.Set(reflect.MakeMap(dict))
 					}
 					// Assigns the value into the map.
-					// log.Printf("map type: %v", mapValue.Type())
-					mapValue.SetMapIndex(reflect.ValueOf(key).Convert(dict.Key()), value)
+					mapValue.SetMapIndex(key, value)
 				}
 			},
 		}, nil
 	case reflect.Struct:
-		return getStructFieldForKey(dict, key), nil
+		if key.Kind() != reflect.String {
+			// This doesn't make sense for structs. They have to use strings. If they didn't they
+			// should at least have things that convert to strings trivially and somehow much the
+			// bencode tag.
+			panic(key)
+		}
+		return getStructFieldForKey(dict, key.String()), nil
 		// if sf.r.PkgPath != "" {
 		//	panic(&UnmarshalFieldError{
 		//		Key:   key,
@@ -382,11 +404,29 @@ func getStructFieldForKey(struct_ reflect.Type, key string) (f dictField) {
 	return
 }
 
+var structKeyType = reflect.TypeFor[string]()
+
+func keyType(v reflect.Value) reflect.Type {
+	switch v.Kind() {
+	case reflect.Map:
+		return v.Type().Key()
+	case reflect.Struct:
+		return structKeyType
+	default:
+		return nil
+	}
+}
+
 func (d *Decoder) parseDict(v reflect.Value) error {
-	// At this point 'd' byte was consumed, now read key/value pairs
+	// At this point 'd' byte was consumed, now read key/value pairs.
+
+	// The key type does not need to be a string for maps.
+	keyType := keyType(v)
+	if keyType == nil {
+		return fmt.Errorf("cannot parse dicts into %v", v.Type())
+	}
 	for {
-		var keyStr string
-		keyValue := reflect.ValueOf(&keyStr).Elem()
+		keyValue := reflect.New(keyType).Elem()
 		ok, err := d.parseValue(keyValue)
 		if err != nil {
 			return fmt.Errorf("error parsing dict key: %w", err)
@@ -395,7 +435,7 @@ func (d *Decoder) parseDict(v reflect.Value) error {
 			return nil
 		}
 
-		df, err := getDictField(v.Type(), keyStr)
+		df, err := getDictField(v.Type(), keyValue)
 		if err != nil {
 			return fmt.Errorf("parsing bencode dict into %v: %w", v.Type(), err)
 		}
@@ -406,10 +446,10 @@ func (d *Decoder) parseDict(v reflect.Value) error {
 			var if_ interface{}
 			if_, ok = d.parseValueInterface()
 			if if_ == nil {
-				return fmt.Errorf("error parsing value for key %q", keyStr)
+				return fmt.Errorf("error parsing value for key %q", keyValue)
 			}
 			if !ok {
-				return fmt.Errorf("missing value for key %q", keyStr)
+				return fmt.Errorf("missing value for key %q", keyValue)
 			}
 			continue
 		}
@@ -419,11 +459,11 @@ func (d *Decoder) parseDict(v reflect.Value) error {
 		if err != nil {
 			var target *UnmarshalTypeError
 			if !(errors.As(err, &target) && df.Tags.IgnoreUnmarshalTypeError()) {
-				return fmt.Errorf("parsing value for key %q: %w", keyStr, err)
+				return fmt.Errorf("parsing value for key %q: %w", keyValue, err)
 			}
 		}
 		if !ok {
-			return fmt.Errorf("missing value for key %q", keyStr)
+			return fmt.Errorf("missing value for key %q", keyValue)
 		}
 		df.Get(v)(setValue)
 	}
@@ -559,8 +599,8 @@ func (d *Decoder) parseUnmarshaler(v reflect.Value) bool {
 	return true
 }
 
-// Returns true if there was a value and it's now stored in 'v', otherwise
-// there was an end symbol ("e") and no value was stored.
+// Returns true if there was a value and it's now stored in 'v'. Otherwise, there was an end symbol
+// ("e") and no value was stored.
 func (d *Decoder) parseValue(v reflect.Value) (bool, error) {
 	// we support one level of indirection at the moment
 	if v.Kind() == reflect.Ptr {

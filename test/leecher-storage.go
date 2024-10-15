@@ -9,7 +9,7 @@ import (
 	"testing/iotest"
 
 	"github.com/anacrolix/missinggo/v2/bitmap"
-	"github.com/frankban/quicktest"
+	qt "github.com/frankban/quicktest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -97,7 +97,7 @@ func testClientTransfer(t *testing.T, ps testClientTransferParams) {
 		newGOMAXPROCS = ps.GOMAXPROCS
 	}
 	defer func() {
-		quicktest.Check(t, runtime.GOMAXPROCS(prevGOMAXPROCS), quicktest.ContentEquals, newGOMAXPROCS)
+		qt.Check(t, runtime.GOMAXPROCS(prevGOMAXPROCS), qt.ContentEquals, newGOMAXPROCS)
 	}()
 
 	greetingTempDir, mi := testutil.GreetingTestTorrent()
@@ -137,7 +137,7 @@ func testClientTransfer(t *testing.T, ps testClientTransferParams) {
 	defer seeder.Close()
 	// Adding a torrent and setting the info should trigger piece checks for everything
 	// automatically. Wait until the seed Torrent agrees that everything is available.
-	<-seederTorrent.Complete.On()
+	<-seederTorrent.Complete().On()
 	// Create leecher and a Torrent.
 	leecherDataDir := t.TempDir()
 	cfg = torrent.TestingConfig(t)
@@ -174,7 +174,7 @@ func testClientTransfer(t *testing.T, ps testClientTransferParams) {
 		return
 	}())
 	require.NoError(t, err)
-	assert.False(t, leecherTorrent.Complete.Bool())
+	assert.False(t, leecherTorrent.Complete().Bool())
 	assert.True(t, new)
 
 	//// This was used when observing coalescing of piece state changes.
@@ -210,9 +210,9 @@ func testClientTransfer(t *testing.T, ps testClientTransferParams) {
 		go leecherTorrent.VerifyData()
 	}
 	if canComplete {
-		<-leecherTorrent.Complete.On()
+		<-leecherTorrent.Complete().On()
 	} else {
-		<-leecherTorrent.Complete.Off()
+		<-leecherTorrent.Complete().Off()
 	}
 	assert.NotEmpty(t, seederTorrent.PeerConns())
 	leecherPeerConns := leecherTorrent.PeerConns()
@@ -251,5 +251,5 @@ func assertReadAllGreeting(t *testing.T, r io.ReadSeeker) {
 	pos, err := r.Seek(0, io.SeekStart)
 	assert.NoError(t, err)
 	assert.EqualValues(t, 0, pos)
-	quicktest.Check(t, iotest.TestReader(r, []byte(testutil.GreetingFileContents)), quicktest.IsNil)
+	qt.Check(t, iotest.TestReader(r, []byte(testutil.GreetingFileContents)), qt.IsNil)
 }

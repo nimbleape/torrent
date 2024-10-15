@@ -15,7 +15,7 @@ import (
 	"github.com/anacrolix/log"
 	"github.com/gorilla/websocket"
 	"github.com/pion/datachannel"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/anacrolix/torrent/tracker"
@@ -64,6 +64,8 @@ type TrackerClient struct {
 
 	WebsocketTrackerHttpHeader func() http.Header
 	ICEServers                 []webrtc.ICEServer
+
+	rtcPeerConns map[string]*wrappedPeerConnection
 }
 
 func (me *TrackerClient) Stats() TrackerClientStats {
@@ -274,16 +276,22 @@ func (tc *TrackerClient) Announce(event tracker.AnnounceEvent, infoHash [20]byte
 		return fmt.Errorf("creating offer: %w", err)
 	}
 
-	err = tc.announce(event, infoHash, []outboundOffer{
-		{
-			offerId: offerIDBinary,
-			outboundOfferValue: outboundOfferValue{
-				originalOffer:  offer,
-				peerConnection: pc,
-				infoHash:       infoHash,
-				dataChannel:    dc,
-			},
-		},
+	// save the leecher peer connections
+	tc.storePeerConnection(fmt.Sprintf("%x", randOfferId[:]), pc)
+
+	pc.OnClose(func() {
+		delete(tc.rtcPeerConns, offerIDBinary)
+	})
+
+	tc.Logger.Levelf(log.Debug, "announcing offer")
+	err = tc.announce(event, infoHash, []outboundOffer{{
+		offerId: offerIDBinary,
+		outboundOfferValue: outboundOfferValue{
+			originalOffer:  offer,
+			peerConnection: pc,
+			infoHash:       infoHash,
+			dataChannel:    dc,
+		}},
 	})
 	if err != nil {
 		dc.Close()
@@ -357,6 +365,19 @@ func (tc *TrackerClient) announce(event tracker.AnnounceEvent, infoHash [20]byte
 	return nil
 }
 
+// Calculate the stats for all the peer connections the moment they are requested.
+// As the stats will change over the life of a peer connection, this ensures that
+// the updated values are returned.
+func (tc *TrackerClient) RtcPeerConnStats() map[string]webrtc.StatsReport {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	sr := make(map[string]webrtc.StatsReport)
+	for id, pc := range tc.rtcPeerConns {
+		sr[id] = GetPeerConnStats(pc)
+	}
+	return sr
+}
+
 func (tc *TrackerClient) writeMessage(data []byte) error {
 	for tc.wsConn == nil {
 		if tc.closed {
@@ -373,7 +394,7 @@ func (tc *TrackerClient) trackerReadLoop(tracker *websocket.Conn) error {
 		if err != nil {
 			return fmt.Errorf("read message error: %w", err)
 		}
-		// tc.Logger.WithDefaultLevel(log.Debug).Printf("received message from tracker: %q", message)
+		tc.Logger.Levelf(log.Debug, "received message: %q", message)
 
 		var ar AnnounceResponse
 		if err := json.Unmarshal(message, &ar); err != nil {
@@ -398,7 +419,13 @@ func (tc *TrackerClient) trackerReadLoop(tracker *websocket.Conn) error {
 		case ar.Answer != nil:
 			tc.handleAnswer(ar.OfferID, *ar.Answer)
 		default:
-			tc.Logger.Levelf(log.Warning, "unhandled announce response %q", message)
+			// wss://tracker.openwebtorrent.com appears to respond to an initial announces without
+			// an offer or answer. I think that's fine. Let's check it at least contains an
+			// infohash.
+			_, err := jsonStringToInfoHash(ar.InfoHash)
+			if err != nil {
+				tc.Logger.Levelf(log.Warning, "unexpected announce response %q", message)
+			}
 		}
 	}
 }
@@ -417,6 +444,10 @@ func (tc *TrackerClient) handleOffer(
 	if err != nil {
 		return fmt.Errorf("creating answering peer connection: %w", err)
 	}
+
+	// save the seeder peer connections
+	tc.storePeerConnection(fmt.Sprintf("%x", offerContext.Id[:]), peerConnection)
+
 	response := AnnounceResponse{
 		Action:   "announce",
 		InfoHash: binaryToJsonString(offerContext.InfoHash[:]),
@@ -458,4 +489,13 @@ func (tc *TrackerClient) handleAnswer(offerId string, answer webrtc.SessionDescr
 	}
 	delete(tc.outboundOffers, offerId)
 	go tc.Announce(tracker.None, offer.infoHash)
+}
+
+func (tc *TrackerClient) storePeerConnection(offerId string, pc *wrappedPeerConnection) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	if tc.rtcPeerConns == nil {
+		tc.rtcPeerConns = make(map[string]*wrappedPeerConnection)
+	}
+	tc.rtcPeerConns[offerId] = pc
 }

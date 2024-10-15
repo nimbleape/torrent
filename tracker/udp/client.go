@@ -7,16 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/anacrolix/dht/v2/krpc"
+	"github.com/anacrolix/log"
+	"github.com/protolambda/ctxlock"
 )
 
 // Client interacts with UDP trackers via its Writer and Dispatcher. It has no knowledge of
 // connection specifics.
 type Client struct {
-	mu           sync.Mutex
+	mu           ctxlock.Lock
 	connId       ConnectionId
 	connIdIssued time.Time
 
@@ -145,7 +146,10 @@ func (cl *Client) writeRequest(
 		// written before allowing the connection ID to change again. This is to ensure the server
 		// doesn't assign us another ID before we've sent this request. Note that this doesn't allow
 		// for us to return if the context is cancelled while we wait to obtain a new ID.
-		cl.mu.Lock()
+		err = cl.mu.LockCtx(ctx)
+		if err != nil {
+			return fmt.Errorf("locking connection id: %w", err)
+		}
 		defer cl.mu.Unlock()
 		connId, err = cl.connIdForRequest(ctx, action)
 		if err != nil {
@@ -221,14 +225,21 @@ func (cl *Client) request(
 		} else if dr.Header.Action == ActionError {
 			// udp://tracker.torrent.eu.org:451/announce frequently returns "Connection ID
 			// missmatch.\x00"
-			err = ErrorResponse{Message: string(dr.Body)}
+			stringBody := string(dr.Body)
+			err = ErrorResponse{Message: stringBody}
+			if stringBody == ConnectionIdMissmatchNul {
+				err = log.WithLevel(log.Debug, err)
+			}
+			// Force a reconnection. Probably any error is worth doing this for, but the one we're
+			// specifically interested in is ConnectionIdMissmatchNul.
+			cl.connIdIssued = time.Time{}
 		} else {
 			err = fmt.Errorf("unexpected response action %v", dr.Header.Action)
 		}
 	case err = <-writeErr:
 		err = fmt.Errorf("write error: %w", err)
 	case <-ctx.Done():
-		err = ctx.Err()
+		err = context.Cause(ctx)
 	}
 	return
 }

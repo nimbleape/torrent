@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -50,7 +51,11 @@ func (piecePerResourceTorrentImpl) Close() error {
 	return nil
 }
 
-func (s piecePerResource) OpenTorrent(info *metainfo.Info, infoHash metainfo.Hash) (TorrentImpl, error) {
+func (s piecePerResource) OpenTorrent(
+	ctx context.Context,
+	info *metainfo.Info,
+	infoHash metainfo.Hash,
+) (TorrentImpl, error) {
 	t := piecePerResourceTorrentImpl{
 		s,
 		make([]sync.RWMutex, info.NumPieces()),
@@ -69,6 +74,10 @@ func (s piecePerResourceTorrentImpl) Piece(p metainfo.Piece, pieceHash g.Option[
 
 type PieceProvider interface {
 	resource.Provider
+}
+
+type MovePrefixer interface {
+	MovePrefix(old, new string) error
 }
 
 type ConsecutiveChunkReader interface {
@@ -95,7 +104,12 @@ func (s piecePerResourcePiece) WriteTo(w io.Writer) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.mustIsComplete() {
-		r, err := s.completed().Get()
+		if s.hasMovePrefix() {
+			if ccr, ok := s.rp.(ConsecutiveChunkReader); ok {
+				return s.writeConsecutiveChunks(ccr, s.completedDirPath(), w)
+			}
+		}
+		r, err := s.completedInstance().Get()
 		if err != nil {
 			return 0, fmt.Errorf("getting complete instance: %w", err)
 		}
@@ -103,13 +117,17 @@ func (s piecePerResourcePiece) WriteTo(w io.Writer) (int64, error) {
 		return io.Copy(w, r)
 	}
 	if ccr, ok := s.rp.(ConsecutiveChunkReader); ok {
-		return s.writeConsecutiveIncompleteChunks(ccr, w)
+		return s.writeConsecutiveChunks(ccr, s.incompleteDirPath(), w)
 	}
 	return io.Copy(w, io.NewSectionReader(s, 0, s.mp.Length()))
 }
 
-func (s piecePerResourcePiece) writeConsecutiveIncompleteChunks(ccw ConsecutiveChunkReader, w io.Writer) (int64, error) {
-	r, err := ccw.ReadConsecutiveChunks(s.incompleteDirPath() + "/")
+func (s piecePerResourcePiece) writeConsecutiveChunks(
+	ccw ConsecutiveChunkReader,
+	dir string,
+	w io.Writer,
+) (int64, error) {
+	r, err := ccw.ReadConsecutiveChunks(dir + "/")
 	if err != nil {
 		return 0, err
 	}
@@ -133,7 +151,13 @@ func (s piecePerResourcePiece) Completion() (_ Completion) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	fi, err := s.completed().Stat()
+	fi, err := s.completedInstance().Stat()
+	if s.hasMovePrefix() {
+		return Completion{
+			Complete: err == nil && fi.Size() != 0,
+			Ok:       true,
+		}
+	}
 	return Completion{
 		Complete: err == nil && fi.Size() == s.mp.Length(),
 		Ok:       true,
@@ -147,7 +171,14 @@ type SizedPutter interface {
 func (s piecePerResourcePiece) MarkComplete() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	incompleteChunks := s.getChunks()
+	if mp, ok := s.rp.(MovePrefixer); ok {
+		err = mp.MovePrefix(s.incompleteDirPath()+"/", s.completedDirPath()+"/")
+		if err != nil {
+			err = fmt.Errorf("moving incomplete to complete: %w", err)
+		}
+		return
+	}
+	incompleteChunks := s.getChunks(s.incompleteDirPath())
 	r, err := func() (io.ReadCloser, error) {
 		if ccr, ok := s.rp.(ConsecutiveChunkReader); ok {
 			return ccr.ReadConsecutiveChunks(s.incompleteDirPath() + "/")
@@ -158,7 +189,7 @@ func (s piecePerResourcePiece) MarkComplete() (err error) {
 		return fmt.Errorf("getting incomplete chunks reader: %w", err)
 	}
 	defer r.Close()
-	completedInstance := s.completed()
+	completedInstance := s.completedInstance()
 	err = func() error {
 		if sp, ok := completedInstance.(SizedPutter); ok && !s.opts.NoSizedPuts {
 			return sp.PutSized(r, s.mp.Length())
@@ -196,16 +227,20 @@ func (s piecePerResourcePiece) MarkComplete() (err error) {
 func (s piecePerResourcePiece) MarkNotComplete() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.completed().Delete()
+	return s.completedInstance().Delete()
 }
 
 func (s piecePerResourcePiece) ReadAt(b []byte, off int64) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.mustIsComplete() {
-		return s.completed().ReadAt(b, off)
+		if s.hasMovePrefix() {
+			chunks := s.getChunks(s.completedDirPath())
+			return chunks.ReadAt(b, off)
+		}
+		return s.completedInstance().ReadAt(b, off)
 	}
-	return s.getChunks().ReadAt(b, off)
+	return s.getChunks(s.incompleteDirPath()).ReadAt(b, off)
 }
 
 func (s piecePerResourcePiece) WriteAt(b []byte, off int64) (n int, err error) {
@@ -232,29 +267,46 @@ type chunk struct {
 
 type chunks []chunk
 
-func (me chunks) ReadAt(b []byte, off int64) (int, error) {
-	for {
-		if len(me) == 0 {
-			return 0, io.EOF
+func (me chunks) ReadAt(b []byte, off int64) (n int, err error) {
+	i := sort.Search(len(me), func(i int) bool {
+		return me[i].offset > off
+	}) - 1
+	if i == -1 {
+		err = io.EOF
+		return
+	}
+	chunk := me[i]
+	// Go made me do this with it's bullshit named return values and := operator.
+again:
+	n1, err := chunk.instance.ReadAt(b, off-chunk.offset)
+	b = b[n1:]
+	n += n1
+	// Should we check here that we're not io.EOF or nil, per ReadAt's contract? That way we know we
+	// don't have an error anymore for the rest of the block.
+	if len(b) == 0 {
+		// err = nil, so we don't send io.EOF on chunk boundaries?
+		return
+	}
+	off += int64(n1)
+	i++
+	if i >= len(me) {
+		if err == nil {
+			err = io.EOF
 		}
-		if me[0].offset <= off {
-			break
+		return
+	}
+	chunk = me[i]
+	if chunk.offset > off {
+		if err == nil {
+			err = io.ErrUnexpectedEOF
 		}
-		me = me[1:]
+		return
 	}
-	n, err := me[0].instance.ReadAt(b, off-me[0].offset)
-	if n == len(b) {
-		return n, nil
-	}
-	if err == nil || err == io.EOF {
-		n_, err := me[1:].ReadAt(b[n:], off+int64(n))
-		return n + n_, err
-	}
-	return n, err
+	goto again
 }
 
-func (s piecePerResourcePiece) getChunks() (chunks chunks) {
-	names, err := s.incompleteDir().Readdirnames()
+func (s piecePerResourcePiece) getChunks(dir string) (chunks chunks) {
+	names, err := s.dirInstance(dir).Readdirnames()
 	if err != nil {
 		return
 	}
@@ -263,7 +315,7 @@ func (s piecePerResourcePiece) getChunks() (chunks chunks) {
 		if err != nil {
 			panic(err)
 		}
-		i, err := s.rp.NewInstance(path.Join(s.incompleteDirPath(), n))
+		i, err := s.rp.NewInstance(path.Join(dir, n))
 		if err != nil {
 			panic(err)
 		}
@@ -275,11 +327,21 @@ func (s piecePerResourcePiece) getChunks() (chunks chunks) {
 	return
 }
 
-func (s piecePerResourcePiece) completedInstancePath() string {
+func (s piecePerResourcePiece) completedDirPath() string {
+	if !s.hasMovePrefix() {
+		panic("not move prefixing")
+	}
 	return path.Join("completed", s.hashHex())
 }
 
-func (s piecePerResourcePiece) completed() resource.Instance {
+func (s piecePerResourcePiece) completedInstancePath() string {
+	if s.hasMovePrefix() {
+		return s.completedDirPath() + "/0"
+	}
+	return path.Join("completed", s.hashHex())
+}
+
+func (s piecePerResourcePiece) completedInstance() resource.Instance {
 	i, err := s.rp.NewInstance(s.completedInstancePath())
 	if err != nil {
 		panic(err)
@@ -291,8 +353,8 @@ func (s piecePerResourcePiece) incompleteDirPath() string {
 	return path.Join("incompleted", s.hashHex())
 }
 
-func (s piecePerResourcePiece) incompleteDir() resource.DirInstance {
-	i, err := s.rp.NewInstance(s.incompleteDirPath())
+func (s piecePerResourcePiece) dirInstance(path string) resource.DirInstance {
+	i, err := s.rp.NewInstance(path)
 	if err != nil {
 		panic(err)
 	}
@@ -301,4 +363,9 @@ func (s piecePerResourcePiece) incompleteDir() resource.DirInstance {
 
 func (me piecePerResourcePiece) hashHex() string {
 	return hex.EncodeToString(me.pieceHash.Unwrap())
+}
+
+func (me piecePerResourcePiece) hasMovePrefix() bool {
+	_, ok := me.rp.(MovePrefixer)
+	return ok
 }

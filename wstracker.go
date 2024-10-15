@@ -11,7 +11,7 @@ import (
 	"github.com/anacrolix/log"
 	"github.com/gorilla/websocket"
 	"github.com/pion/datachannel"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 
 	"github.com/anacrolix/torrent/tracker"
 	httpTracker "github.com/anacrolix/torrent/tracker/http"
@@ -29,6 +29,9 @@ func (me websocketTrackerStatus) statusLine() string {
 
 func (me websocketTrackerStatus) URL() *url.URL {
 	return &me.url
+}
+
+func (me websocketTrackerStatus) Stop() {
 }
 
 type refCountedWebtorrentTrackerClient struct {
@@ -55,7 +58,11 @@ func (me *websocketTrackers) Get(url string, infoHash [20]byte) (*webtorrent.Tra
 	defer me.mu.Unlock()
 	value, ok := me.clients[url]
 	if !ok {
-		dialer := &websocket.Dialer{Proxy: me.Proxy, NetDialContext: me.DialContext, HandshakeTimeout: websocket.DefaultDialer.HandshakeTimeout}
+		dialer := &websocket.Dialer{
+			Proxy:            me.Proxy,
+			NetDialContext:   me.DialContext,
+			HandshakeTimeout: websocket.DefaultDialer.HandshakeTimeout,
+		}
 		value = &refCountedWebtorrentTrackerClient{
 			TrackerClient: webtorrent.TrackerClient{
 				Observers:          me.obs,
@@ -64,9 +71,11 @@ func (me *websocketTrackers) Get(url string, infoHash [20]byte) (*webtorrent.Tra
 				GetAnnounceRequest: me.GetAnnounceRequest,
 				PeerId:             me.PeerId,
 				OnConn:             me.OnConn,
-				Logger: me.Logger.WithText(func(m log.Msg) string {
-					return fmt.Sprintf("tracker client for %q: %v", url, m)
-				}),
+				Logger: me.Logger.WithText(
+					func(m log.Msg) string {
+						return fmt.Sprintf("tracker client for %q: %v", url, m)
+					},
+				),
 				WebsocketTrackerHttpHeader: me.WebsocketTrackerHttpHeader,
 				ICEServers:                 me.ICEServers,
 			},

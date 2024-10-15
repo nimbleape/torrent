@@ -199,7 +199,7 @@ func (t *Torrent) CancelPieces(begin, end pieceIndex) {
 	t.cl.unlock()
 }
 
-func (t *Torrent) cancelPiecesLocked(begin, end pieceIndex, reason string) {
+func (t *Torrent) cancelPiecesLocked(begin, end pieceIndex, reason updateRequestReason) {
 	for i := begin; i < end; i++ {
 		p := &t.pieces[i]
 		if p.priority == PiecePriorityNone {
@@ -264,6 +264,12 @@ func (t *Torrent) AddTrackers(announceList [][]string) {
 	t.cl.lock()
 	defer t.cl.unlock()
 	t.addTrackers(announceList)
+}
+
+func (t *Torrent) ModifyTrackers(announceList [][]string) {
+	t.cl.lock()
+	defer t.cl.unlock()
+	t.modifyTrackers(announceList)
 }
 
 func (t *Torrent) Piece(i pieceIndex) *Piece {
